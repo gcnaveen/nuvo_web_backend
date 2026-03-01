@@ -74,13 +74,17 @@ POST `/auth/verify-otp/`
 ```
 {
   "success": true,
+  "message": "Login successful",
   "data": {
-    "access_token": "...",
-    "refresh_token": "...",
+    "access_token": ".........",
+    "refresh_token": ".........",
     "user": {
-      "id": "uuid",
-      "email": "user@gmail.com",
-      "role": "CLIENT"
+      "id": "ee7c55fc-4d49-4aff-b22a-a9df6937a178",
+      "email": "rakeshac420@gmail.com",
+      "phone_number": "9686045679",
+      "role": "CLIENT",
+      "status": "ACTIVE",
+      "profile_completed": false
     }
   }
 }

@@ -143,11 +143,7 @@ def verify_otp(request):
         return api_response(True, "Login successful", {
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "role": user.role
-            }
+            "user": build_user_response(user)
         })
 
     except DoesNotExist:
@@ -349,3 +345,31 @@ def change_user_status(request):
 
     except Exception as e:
         return api_response(False, str(e), status=500)
+    
+
+def build_user_response(user):
+    from apps.users.models import (
+        ClientProfile,
+        StaffProfile,
+        MakeupArtistProfile
+    )
+
+    profile_completed = False
+
+    if user.role == "CLIENT":
+        profile_completed = ClientProfile.objects(user=user).first() is not None
+
+    elif user.role == "STAFF":
+        profile_completed = StaffProfile.objects(user=user).first() is not None
+
+    elif user.role == "MAKEUP_ARTIST":
+        profile_completed = MakeupArtistProfile.objects(user=user).first() is not None
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "phone_number": user.phone_number,
+        "role": user.role,
+        "status": user.status,
+        "profile_completed": profile_completed
+    }
