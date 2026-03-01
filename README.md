@@ -23,20 +23,20 @@ If profile not completed → call complete-profile
 Normal app usage
 ```
 
-### 🌍 Base URL
-`http://127.0.0.1:8000/api/`
+### 🌍 Base URL 
+`http://127.0.0.1:8000/api/` 
 
-All protected APIs require:
+All protected APIs require: 
 
-`Authorization: Bearer <ACCESS_TOKEN> `
+`Authorization: Bearer <ACCESS_TOKEN> ` 
 
-## 🔐 AUTH APIs
-### 1️⃣ Send OTP
+## 🔐 AUTH APIs 
+### 1️⃣ Send OTP 
 
-POST `/auth/send-otp/`
+POST `/auth/send-otp/` 
 
-### Body
-```
+### Body 
+``` 
 {
   "email": "user@gmail.com",
   "phone_number": "9999999999",
@@ -304,3 +304,192 @@ GOLD
 PLATINUM
 DIAMOND
 ```
+
+
+
+# Master data apis 
+## ✅ Create Event Theme
+POST `/master/themes/create/`  
+### Body 
+```
+{
+  "theme_name": "Royal Wedding",
+  "description": "Classic royal wedding setup with golden decor",
+  "cover_image": "https://example.com/cover.jpg",
+  "gallery_images": [
+    "https://example.com/img1.jpg",
+    "https://example.com/img2.jpg"
+  ]
+}
+```
+### Responce 
+```
+{
+  "success": true,
+  "message": "Theme created",
+  "data": {}
+}
+```
+
+## ✅ List Event Themes 
+GET `/master/themes/`
+### Responce 
+```
+{
+  "success": true,
+  "message": "Themes fetched",
+  "data": [
+    {
+      "id": "uuid",
+      "theme_name": "Royal Wedding",
+      "status": "ACTIVE",
+      "description": "Classic royal wedding setup",
+      "cover_image": "https://example.com/cover.jpg",
+      "gallery_images": [
+        "https://example.com/img1.jpg"
+      ]
+    }
+  ]
+}
+```
+
+
+## ✅ Update Event Theme
+GET `/master/themes/<theme_id>/update/`
+### Body 
+```
+{
+  "theme_name": "Modern Royal Wedding",
+  "status": "ACTIVE",
+  "description": "Updated description"
+}
+```
+### Responce 
+```
+{
+  "success": true,
+  "message": "Theme updated",
+  "data": {}
+}
+```
+
+## ✅ Delete Event Theme
+DELETE `/master/themes/<theme_id>/delete/`
+### Body 
+```
+{
+  "success": true,
+  "message": "Theme deleted",
+  "data": {}
+}
+```
+### Responce 
+```
+{
+  "success": true,
+  "message": "Theme deleted",
+  "data": {}
+}
+```
+
+
+## uniform category
+
+## ✅ Create Uniform Category
+POST `/master/uniform/create/`
+
+### Body
+```
+{
+  "category_name": "Royal Traditional",
+  "unique_key": "royal_traditional",
+  "description": "Traditional royal uniforms",
+  "images": [
+    "https://example.com/u1.jpg",
+    "https://example.com/u2.jpg"
+  ]
+}
+```
+### Response
+```
+{
+  "success": true,
+  "message": "Uniform category created",
+  "data": {}
+}
+```
+
+## ✅ List Uniform Categories
+GET `/master/uniform/`
+### Response
+```
+{
+  "success": true,
+  "message": "Uniform categories fetched",
+  "data": [
+    {
+      "id": "uuid",
+      "category_name": "Royal Traditional",
+      "unique_key": "royal_traditional",
+      "description": "Traditional royal uniforms",
+      "images": ["https://example.com/u1.jpg"],
+      "is_active": true
+    }
+  ]
+}
+```
+
+## 🟡 3️⃣ SUBSCRIPTION PLAN SETTINGS
+
+Plan names are fixed:
+```
+Diamond
+Platinum
+Gold
+Silver
+Bronze
+```
+
+## ✅ Update Subscription Plan
+PUT `/master/subscription/<plan_name>/update/`
+### Example:
+`/subscription/Diamond/update/` 
+### Body
+```
+{
+  "monthlyPrice": 9999,
+  "yearlyPrice": 99999,
+  "prioritySupport": true,
+  "isFree": false
+}
+```
+### Response
+```
+{
+  "success": true,
+  "message": "Subscription plan updated",
+  "data": {}
+}
+```
+
+## 🔵 4️⃣ PAYMENT TERMS
+
+Single document collection.
+
+### ✅ Update Payment Terms
+PUT `/master/payment/update/`
+### Body
+```
+{
+  "advancePercentage": 30
+}
+```
+### Response
+```
+{
+  "success": true,
+  "message": "Payment terms updated",
+  "data": {}
+}
+```
+
