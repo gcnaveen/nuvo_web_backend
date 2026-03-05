@@ -12,23 +12,24 @@ DEBUG = False
 
 ALLOWED_HOSTS = []
 
-INSTALLED_APPS = [
+# On Lambda, skip drf_yasg to avoid "No package metadata was found" (metadata stripped by deploy)
+_INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-
     "rest_framework",
     "corsheaders",
-    "drf_yasg",
-
     "apps.accounts",
     "apps.users",
     "apps.common",
     "apps.master",
 ]
+if not os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+    _INSTALLED_APPS.insert(_INSTALLED_APPS.index("corsheaders") + 1, "drf_yasg")
+INSTALLED_APPS = _INSTALLED_APPS
 
 MIDDLEWARE = [
     "apps.common.error_middleware.GlobalExceptionMiddleware",
@@ -59,14 +60,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# MongoDB via MongoEngine
-from mongoengine import connect
-
-connect(
-    host=os.getenv("MONGO_URI")
-)
-
-print("Mongo URI:", os.getenv("MONGO_URI"))
+# MongoDB via MongoEngine — only connect if MONGO_URI is set (required on Lambda)
+MONGO_URI = os.getenv("MONGO_URI")
+if MONGO_URI:
+    from mongoengine import connect
+    connect(host=MONGO_URI)
+else:
+    import logging
+    logging.warning("MONGO_URI not set — MongoDB operations will fail. Set it in Lambda environment.")
 
 AUTH_PASSWORD_VALIDATORS = []
 

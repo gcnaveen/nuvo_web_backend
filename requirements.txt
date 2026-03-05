@@ -18,3 +18,4 @@ pytz==2025.2
 PyYAML==6.0.3
 sqlparse==0.5.5
 uritemplate==4.2.0
+mangum==0.17.0

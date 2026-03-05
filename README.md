@@ -1,5 +1,24 @@
 # nuvo_web_backend
 
+## Local setup (macOS / Linux)
+
+Use a virtual environment so `pip install` doesn’t touch system Python:
+
+```bash
+# From repo root (Nuvo_backend)
+cd nuvo_web_backend
+python3 -m venv .venv
+source .venv/bin/activate    # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Then run the app:
+
+```bash
+python manage.py runserver
+```
+
+---
 
 📦 Project Architecture
 ```

@@ -1,4 +1,9 @@
+import logging
+import os
+
 from django.http import JsonResponse
+
+logger = logging.getLogger(__name__)
 
 
 class GlobalExceptionMiddleware:
@@ -11,8 +16,14 @@ class GlobalExceptionMiddleware:
             response = self.get_response(request)
             return response
         except Exception as e:
-            return JsonResponse({
+            # Log full traceback to CloudWatch so you can see the real error
+            logger.exception("Request failed: %s", e)
+            payload = {
                 "success": False,
                 "message": "Internal server error",
                 "data": {}
-            }, status=500)
+            }
+            # In Lambda, optionally include error detail for debugging (set DEBUG_LAMBDA=1 in env)
+            if os.getenv("DEBUG_LAMBDA") == "1":
+                payload["debug_error"] = str(e)
+            return JsonResponse(payload, status=500)
