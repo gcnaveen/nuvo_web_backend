@@ -61,8 +61,8 @@ def send_otp(request):
         OTP.objects(email=email).delete()
 
         # ---- Generate OTP ----
-        # otp_code = OTP.generate_otp()
-        otp_code = "123456"  # For testing purposes, replace with above line in production
+        otp_code = OTP.generate_otp()
+        # otp_code = "123456"  # For testing purposes, replace with above line in production
 
         otp = OTP(
             email=email,
@@ -72,7 +72,7 @@ def send_otp(request):
         otp.save()
 
         # ---- Send Email ----
-        # send_otp_email(email, otp_code)
+        send_otp_email(email, otp_code)
 
         return api_response(True, "OTP sent successfully")
 

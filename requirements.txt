@@ -1,4 +1,6 @@
 asgiref==3.11.1
+boto3==1.42.61
+botocore==1.42.61
 Django==6.0.2
 django-cors-headers==4.9.0
 django-environ==0.13.0
@@ -8,14 +10,20 @@ dnspython==2.8.0
 drf-yasg==1.21.15
 gunicorn==25.1.0
 inflection==0.5.1
+jmespath==1.1.0
 mongoengine==0.29.1
 packaging==26.0
 pillow==12.1.1
 PyJWT==2.11.0
 pymongo==4.16.0
+python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
+python-multipart==0.0.22
 pytz==2025.2
 PyYAML==6.0.3
+s3transfer==0.16.0
+six==1.17.0
 sqlparse==0.5.5
 uritemplate==4.2.0
 mangum==0.17.0
+urllib3==2.6.3

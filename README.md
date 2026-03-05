@@ -20,16 +20,19 @@ python manage.py runserver
 
 ---
 
-📦 Project Architecture
 ```
 apps/
 │
 ├── accounts/     → Auth, OTP, JWT, Middleware
 ├── users/        → Profile & Business Logic
 ├── common/       → Utilities & Validators
+├── master/       → Event Themes, Uniforms, Subscriptions, Payment Terms
 ```
 
+---
+
 ## 🔐 Authentication Flow
+
 ```
 send-otp
     ↓
@@ -42,34 +45,37 @@ If profile not completed → call complete-profile
 Normal app usage
 ```
 
-### 🌍 Base URL 
-`http://127.0.0.1:8000/api/` 
+### 🌍 Base URL
 
-All protected APIs require: 
+`http://127.0.0.1:8000/api/`
 
-`Authorization: Bearer <ACCESS_TOKEN> ` 
+All protected APIs require:
 
-## 🔐 AUTH APIs 
-### 1️⃣ Send OTP 
+`Authorization: Bearer <ACCESS_TOKEN>`
 
-POST `/auth/send-otp/` 
+---
 
-### Body 
-``` 
+## 🔐 AUTH APIs
+
+### 1️⃣ Send OTP
+
+`POST /auth/send-otp/`
+
+**Body**
+
+```json
 {
   "email": "user@gmail.com",
   "phone_number": "9999999999",
   "role": "CLIENT"
 }
 ```
-### Roles
-- CLIENT
-- STAFF
-- MAKEUP_ARTIST
-- ADMIN
 
-### Response
-```
+**Roles:** `CLIENT` · `STAFF` · `MAKEUP_ARTIST` · `ADMIN`
+
+**Response**
+
+```json
 {
   "success": true,
   "message": "OTP sent successfully",
@@ -77,11 +83,15 @@ POST `/auth/send-otp/`
 }
 ```
 
-## 2️⃣ Verify OTP (Login)
+---
 
-POST `/auth/verify-otp/`
-### body
-```
+### 2️⃣ Verify OTP (Login)
+
+`POST /auth/verify-otp/`
+
+**Body**
+
+```json
 {
   "email": "user@gmail.com",
   "phone_number": "9999999999",
@@ -89,8 +99,10 @@ POST `/auth/verify-otp/`
   "otp": "123456"
 }
 ```
-### Response
-```
+
+**Response**
+
+```json
 {
   "success": true,
   "message": "Login successful",
@@ -99,8 +111,8 @@ POST `/auth/verify-otp/`
     "refresh_token": ".........",
     "user": {
       "id": "ee7c55fc-4d49-4aff-b22a-a9df6937a178",
-      "email": "rakeshac420@gmail.com",
-      "phone_number": "9686045679",
+      "email": "user@gmail.com",
+      "phone_number": "9999999999",
       "role": "CLIENT",
       "status": "ACTIVE",
       "profile_completed": false
@@ -109,18 +121,23 @@ POST `/auth/verify-otp/`
 }
 ```
 
-## 3️⃣ Refresh Token
+---
 
-POST `/auth/refresh-token/`
-### body
-```
+### 3️⃣ Refresh Token
+
+`POST /auth/refresh-token/`
+
+**Body**
+
+```json
 {
   "refresh_token": "your_refresh_token"
 }
 ```
-Returns new access token.
-### Responce 
-```
+
+**Response**
+
+```json
 {
   "success": true,
   "message": "Token refreshed successfully",
@@ -130,24 +147,27 @@ Returns new access token.
 }
 ```
 
+---
 
+### 4️⃣ Logout
 
-## 4️⃣ Logout
+`POST /auth/logout/`
 
-POST `/auth/logout/`
+**Headers:** `Authorization: Bearer ACCESS_TOKEN`
 
-### Header:
-`Authorization: Bearer ACCESS_TOKEN`
+**Body**
 
-### Body:
-```
+```json
 {
   "refresh_token": "your_refresh_token"
 }
 ```
-Blacklists refresh token.
-### Responce 
-```
+
+Blacklists the refresh token.
+
+**Response**
+
+```json
 {
   "success": true,
   "message": "Logged out successfully",
@@ -155,18 +175,25 @@ Blacklists refresh token.
 }
 ```
 
-## 5️⃣ Resend OTP
+---
 
-POST `/auth/resend-otp/`
-### Body
-```
+### 5️⃣ Resend OTP
+
+`POST /auth/resend-otp/`
+
+60-second cooldown · 5-minute expiry
+
+**Body**
+
+```json
 {
   "email": "user@gmail.com"
 }
 ```
-60-second cooldown 5-minute expiry
-### Responce
-```
+
+**Response**
+
+```json
 {
   "success": true,
   "message": "OTP resent successfully",
@@ -174,11 +201,15 @@ POST `/auth/resend-otp/`
 }
 ```
 
-## 6️⃣ Get Logged-in User
+---
 
-GET `/auth/me/`
-### Returns:
-```
+### 6️⃣ Get Logged-in User
+
+`GET /auth/me/`
+
+**Response**
+
+```json
 {
   "success": true,
   "message": "User fetched",
@@ -193,14 +224,17 @@ GET `/auth/me/`
 }
 ```
 
+---
 
-# 👤 PROFILE APIs
+## 👤 PROFILE APIs
 
-## 7️⃣ Complete Client Profile 
+### 7️⃣ Complete Client Profile
 
-POST `/users/complete/client/`
-### Body
-```
+`POST /users/complete/client/`
+
+**Body**
+
+```json
 {
   "full_name": "Rakesh AC",
   "city": "Bangalore",
@@ -209,21 +243,16 @@ POST `/users/complete/client/`
   "subscription_plan": "SILVER"
 }
 ```
-### Responce 
-```
-{
-  "success": true,
-  "message": "Client profile completed",
-  "data": {}
-}
-```
 
+---
 
-## 8️⃣ Complete Staff Profile
+### 8️⃣ Complete Staff Profile
 
-POST `/users/complete/staff/`
-### Body
-```
+`POST /users/complete/staff/`
+
+**Body**
+
+```json
 {
   "full_name": "Rahul",
   "stage_name": "Rocky",
@@ -236,12 +265,15 @@ POST `/users/complete/staff/`
 }
 ```
 
+---
 
-## 9️⃣ Complete Makeup Artist Profile
+### 9️⃣ Complete Makeup Artist Profile
 
-POST `/users/complete/makeup/`
-### Body
-```
+`POST /users/complete/makeup/`
+
+**Body**
+
+```json
 {
   "full_name": "Anita",
   "gender": "Female",
@@ -253,107 +285,286 @@ POST `/users/complete/makeup/`
 }
 ```
 
+---
 
-## 🔟 Get My Profile (Role-Based)
+### 🔟 Get My Profile (Role-Based)
 
-GET `/users/my-profile/`
+`GET /users/my-profile/`
 
-Returns profile based on role.
+Returns profile fields based on the authenticated user's role.
 
+---
 
-## 1️⃣1️⃣ Update My Profile
+### 1️⃣1️⃣ Update My Profile
 
-PUT `/users/update-profile/`
+`PUT /users/update-profile/`
 
-Body depends on role.
+Body fields depend on role (see Complete Profile bodies above for available fields).
 
-## 1️⃣2️⃣ Upload Staff Images
+---
 
-POST `/users/staff/upload-images/`
+### 1️⃣2️⃣ Upload Staff Images (S3)
 
-Form Data:
+`POST /users/staff/upload-images/`
+
+**Content-Type:** `multipart/form-data`
+
+| Field             | Type   | Description                                          |
+| ----------------- | ------ | ---------------------------------------------------- |
+| `profile_picture` | file   | _(optional)_ Replaces existing profile picture in S3 |
+| `gallery_images`  | file[] | _(optional)_ Replaces entire gallery in S3           |
+
+At least one of the two fields is required. Old S3 files are deleted before new ones are uploaded.
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Images uploaded successfully",
+  "data": {
+    "profile_picture": "https://s3.amazonaws.com/bucket/staff/profile_pictures/uuid.jpg",
+    "gallery_images": ["https://s3.amazonaws.com/bucket/staff/gallery/uuid.jpg"]
+  }
+}
 ```
-images: file1
-images: file2
-images: file3
+
+---
+
+## 👑 ADMIN APIs
+
+### 1️⃣3️⃣ List Staff
+
+`GET /users/admin/staff/`
+
+Requires role = `ADMIN`
+
+**Query Parameters**
+
+| Param        | Type   | Description                                           |
+| ------------ | ------ | ----------------------------------------------------- |
+| `search`     | string | Search by full name or stage name (case-insensitive)  |
+| `city`       | string | Filter by city (exact, case-insensitive)              |
+| `package`    | string | `platinum` · `diamond` · `gold` · `silver` · `bronze` |
+| `status`     | string | `assigned` (on event) or `unassigned` (available)     |
+| `start_date` | date   | Joined date from `YYYY-MM-DD`                         |
+| `end_date`   | date   | Joined date to `YYYY-MM-DD`                           |
+| `page`       | int    | Page number (default: `1`)                            |
+| `page_size`  | int    | Results per page (default: `15`, max: `100`)          |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Staff list fetched",
+  "data": {
+    "results": [
+      {
+        "id": "uuid",
+        "user_id": "uuid",
+        "full_name": "Rahul",
+        "stage_name": "Rocky",
+        "gender": "Male",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "country": "India",
+        "package": "gold",
+        "status": "active",
+        "price_of_staff": 5000,
+        "experience_in_years": 3,
+        "profile_picture": "https://s3.amazonaws.com/...",
+        "joined_date": "2024-01-15"
+      }
+    ],
+    "pagination": {
+      "total": 120,
+      "page": 1,
+      "page_size": 15,
+      "total_pages": 8
+    }
+  }
+}
 ```
-Stores locally
 
-Updates gallery_images field
+---
 
+### 1️⃣4️⃣ List Makeup Artists
 
-# 👑 ADMIN APIs
-## 1️⃣3️⃣ List All Users
+`GET /users/admin/makeup-artists/`
 
-GET `/users/admin/all-users/`
+Requires role = `ADMIN`
 
-Requires role = ADMIN
+**Query Parameters**
 
-## 1️⃣4️⃣ Change User Status
+| Param        | Type   | Description                                  |
+| ------------ | ------ | -------------------------------------------- |
+| `search`     | string | Search by full name (case-insensitive)       |
+| `city`       | string | Filter by city (exact, case-insensitive)     |
+| `experience` | int    | Minimum years of experience                  |
+| `status`     | string | `active` · `inactive` · `blocked`            |
+| `page`       | int    | Page number (default: `1`)                   |
+| `page_size`  | int    | Results per page (default: `15`, max: `100`) |
 
-PUT `/users/admin/change-status/`
-### Body
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Makeup artists list fetched",
+  "data": {
+    "results": [
+      {
+        "id": "uuid",
+        "user_id": "uuid",
+        "full_name": "Anita",
+        "gender": "Female",
+        "makeup_speciality": "Bridal",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "country": "India",
+        "experience_in_years": 5,
+        "status": "active",
+        "profile_picture": "https://s3.amazonaws.com/...",
+        "joined_date": "2024-03-10"
+      }
+    ],
+    "pagination": {
+      "total": 45,
+      "page": 1,
+      "page_size": 15,
+      "total_pages": 3
+    }
+  }
+}
 ```
+
+---
+
+### 1️⃣5️⃣ List Clients
+
+`GET /users/admin/clients/`
+
+Requires role = `ADMIN`
+
+**Query Parameters**
+
+| Param        | Type   | Description                                           |
+| ------------ | ------ | ----------------------------------------------------- |
+| `search`     | string | Search by full name **or** email (case-insensitive)   |
+| `city`       | string | Filter by city (exact, case-insensitive)              |
+| `plan_type`  | string | `SILVER` · `BRONZE` · `GOLD` · `PLATINUM` · `DIAMOND` |
+| `status`     | string | `active` · `inactive` · `blocked`                     |
+| `start_date` | date   | Joined date from `YYYY-MM-DD`                         |
+| `end_date`   | date   | Joined date to `YYYY-MM-DD`                           |
+| `page`       | int    | Page number (default: `1`)                            |
+| `page_size`  | int    | Results per page (default: `15`, max: `100`)          |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Clients list fetched",
+  "data": {
+    "results": [
+      {
+        "id": "uuid",
+        "user_id": "uuid",
+        "full_name": "Rakesh AC",
+        "email": "rakesh@gmail.com",
+        "city": "Bangalore",
+        "state": "Karnataka",
+        "country": "India",
+        "subscription_plan": "SILVER",
+        "status": "active",
+        "joined_date": "2024-06-01"
+      }
+    ],
+    "pagination": {
+      "total": 200,
+      "page": 1,
+      "page_size": 15,
+      "total_pages": 14
+    }
+  }
+}
+```
+
+---
+
+### 1️⃣6️⃣ List All Users (Raw)
+
+`GET /users/admin/all-users/`
+
+Requires role = `ADMIN`. Returns basic user records without profile data.
+
+---
+
+### 1️⃣7️⃣ Change User Status
+
+`PUT /users/admin/change-status/`
+
+**Body**
+
+```json
 {
   "user_id": "uuid",
   "status": "BLOCKED"
 }
 ```
-### Status options:
-```
-ACTIVE
-INACTIVE
-BLOCKED
-```
 
-## 1️⃣5️⃣ Update Client Subscription
+**Status options:** `ACTIVE` · `INACTIVE` · `BLOCKED`
 
-PUT `/users/admin/update-subscription/`
-```
+---
+
+### 1️⃣8️⃣ Update Client Subscription
+
+`PUT /users/admin/update-subscription/`
+
+**Body**
+
+```json
 {
   "user_id": "uuid",
   "subscription_plan": "GOLD"
 }
 ```
-### Plans:
-```
-SILVER
-BRONZE
-GOLD
-PLATINUM
-DIAMOND
-```
 
+**Plans:** `SILVER` · `BRONZE` · `GOLD` · `PLATINUM` · `DIAMOND`
 
+---
 
-# Master data apis 
-## ✅ Create Event Theme
-POST `/master/themes/create/`  
-### Body 
-```
-{
-  "theme_name": "Royal Wedding",
-  "description": "Classic royal wedding setup with golden decor",
-  "cover_image": "https://example.com/cover.jpg",
-  "gallery_images": [
-    "https://example.com/img1.jpg",
-    "https://example.com/img2.jpg"
-  ]
-}
-```
-### Responce 
-```
-{
-  "success": true,
-  "message": "Theme created",
-  "data": {}
-}
-```
+## 🗂️ Master Data APIs
 
-## ✅ List Event Themes 
-GET `/master/themes/`
-### Responce 
-```
+> All master APIs require `Authorization: Bearer <ACCESS_TOKEN>` and role = `ADMIN`
+
+---
+
+### 🎨 EVENT THEMES
+
+#### Create Event Theme
+
+`POST /master/themes/create/`
+
+**Content-Type:** `multipart/form-data`
+
+| Field            | Type   | Description             |
+| ---------------- | ------ | ----------------------- |
+| `theme_name`     | string | Name of the theme       |
+| `description`    | string | Theme description       |
+| `cover_image`    | file   | Cover image file        |
+| `gallery_images` | file[] | Multiple gallery images |
+
+---
+
+#### List Event Themes
+
+`GET /master/themes/`
+
+**Response**
+
+```json
 {
   "success": true,
   "message": "Themes fetched",
@@ -363,85 +574,66 @@ GET `/master/themes/`
       "theme_name": "Royal Wedding",
       "status": "ACTIVE",
       "description": "Classic royal wedding setup",
-      "cover_image": "https://example.com/cover.jpg",
+      "cover_image": "https://s3.amazonaws.com/bucket/event_themes/cover.jpg",
       "gallery_images": [
-        "https://example.com/img1.jpg"
+        "https://s3.amazonaws.com/bucket/event_themes/gallery/img1.jpg"
       ]
     }
   ]
 }
 ```
 
+---
 
-## ✅ Update Event Theme
-GET `/master/themes/<theme_id>/update/`
-### Body 
-```
-{
-  "theme_name": "Modern Royal Wedding",
-  "status": "ACTIVE",
-  "description": "Updated description"
-}
-```
-### Responce 
-```
-{
-  "success": true,
-  "message": "Theme updated",
-  "data": {}
-}
-```
+#### Update Event Theme
 
-## ✅ Delete Event Theme
-DELETE `/master/themes/<theme_id>/delete/`
-### Body 
-```
-{
-  "success": true,
-  "message": "Theme deleted",
-  "data": {}
-}
-```
-### Responce 
-```
-{
-  "success": true,
-  "message": "Theme deleted",
-  "data": {}
-}
-```
+`PUT /master/themes/<theme_id>/update/`
 
+**Content-Type:** `multipart/form-data`
 
-## uniform category
+| Field              | Type     | Description                                                       |
+| ------------------ | -------- | ----------------------------------------------------------------- |
+| `theme_name`       | string   | _(optional)_ Updated name                                         |
+| `description`      | string   | _(optional)_ Updated description                                  |
+| `status`           | string   | _(optional)_ `ACTIVE` / `INACTIVE`                                |
+| `cover_image`      | file     | _(optional)_ New cover image — replaces old one in S3             |
+| `gallery_images`   | file[]   | _(optional)_ New gallery images to add                            |
+| `existing_gallery` | string[] | URLs of gallery images to keep — omitted URLs are deleted from S3 |
 
-## ✅ Create Uniform Category
-POST `/master/uniform/create/`
+---
 
-### Body
-```
-{
-  "category_name": "Royal Traditional",
-  "unique_key": "royal_traditional",
-  "description": "Traditional royal uniforms",
-  "images": [
-    "https://example.com/u1.jpg",
-    "https://example.com/u2.jpg"
-  ]
-}
-```
-### Response
-```
-{
-  "success": true,
-  "message": "Uniform category created",
-  "data": {}
-}
-```
+#### Delete Event Theme
 
-## ✅ List Uniform Categories
-GET `/master/uniform/`
-### Response
-```
+`DELETE /master/themes/<theme_id>/delete/`
+
+Deletes the theme and removes cover image + all gallery images from S3.
+
+---
+
+### 👔 UNIFORM CATEGORIES
+
+#### Create Uniform Category
+
+`POST /master/uniform/create/`
+
+**Content-Type:** `multipart/form-data`
+
+| Field           | Type   | Description                            |
+| --------------- | ------ | -------------------------------------- |
+| `category_name` | string | Name of the uniform category           |
+| `unique_key`    | string | Unique slug (e.g. `royal_traditional`) |
+| `description`   | string | Category description                   |
+| `images`        | file[] | One or more uniform image files        |
+
+---
+
+#### List Uniform Categories
+
+`GET /master/uniform/`
+
+**Response**
+
+```json
 {
   "success": true,
   "message": "Uniform categories fetched",
@@ -451,30 +643,52 @@ GET `/master/uniform/`
       "category_name": "Royal Traditional",
       "unique_key": "royal_traditional",
       "description": "Traditional royal uniforms",
-      "images": ["https://example.com/u1.jpg"],
+      "images": ["https://s3.amazonaws.com/bucket/uniform_categories/u1.jpg"],
       "is_active": true
     }
   ]
 }
 ```
 
-## 🟡 3️⃣ SUBSCRIPTION PLAN SETTINGS
+---
 
-Plan names are fixed:
-```
-Diamond
-Platinum
-Gold
-Silver
-Bronze
-```
+#### Update Uniform Category
 
-## ✅ Update Subscription Plan
-PUT `/master/subscription/<plan_name>/update/`
-### Example:
-`/subscription/Diamond/update/` 
-### Body
-```
+`PUT /master/uniform/<category_id>/update/`
+
+**Content-Type:** `multipart/form-data`
+
+| Field             | Type     | Description                                               |
+| ----------------- | -------- | --------------------------------------------------------- |
+| `category_name`   | string   | _(optional)_ Updated name                                 |
+| `description`     | string   | _(optional)_ Updated description                          |
+| `is_active`       | string   | _(optional)_ `"true"` or `"false"`                        |
+| `images`          | file[]   | _(optional)_ New images to upload                         |
+| `existing_images` | string[] | URLs of images to keep — omitted URLs are deleted from S3 |
+
+---
+
+#### Delete Uniform Category
+
+`DELETE /master/uniform/<category_id>/delete/`
+
+Deletes the category and removes all associated images from S3.
+
+---
+
+### 💳 SUBSCRIPTION PLAN SETTINGS
+
+Plan names are fixed: `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
+
+#### Update Subscription Plan
+
+`PUT /master/subscription/<plan_name>/update/`
+
+**Example:** `PUT /master/subscription/Diamond/update/`
+
+**Body**
+
+```json
 {
   "monthlyPrice": 9999,
   "yearlyPrice": 99999,
@@ -482,33 +696,21 @@ PUT `/master/subscription/<plan_name>/update/`
   "isFree": false
 }
 ```
-### Response
-```
-{
-  "success": true,
-  "message": "Subscription plan updated",
-  "data": {}
-}
-```
 
-## 🔵 4️⃣ PAYMENT TERMS
+---
 
-Single document collection.
+### 💰 PAYMENT TERMS
 
-### ✅ Update Payment Terms
-PUT `/master/payment/update/`
-### Body
-```
+Single document — stores the global advance payment percentage.
+
+#### Update Payment Terms
+
+`PUT /master/payment/update/`
+
+**Body**
+
+```json
 {
   "advancePercentage": 30
 }
 ```
-### Response
-```
-{
-  "success": true,
-  "message": "Payment terms updated",
-  "data": {}
-}
-```
-

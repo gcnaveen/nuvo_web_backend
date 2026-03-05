@@ -12,6 +12,8 @@ urlpatterns = [
     # Uniform
     path("uniform/create/", create_uniform_category),
     path("uniform/", list_uniform_categories),
+    path("uniform/<str:category_id>/update/", update_uniform_category),
+    path("uniform/<str:category_id>/delete/", delete_uniform_category),
 
     # Subscription
     path("subscription/<str:plan_name>/update/", update_subscription_plan),
