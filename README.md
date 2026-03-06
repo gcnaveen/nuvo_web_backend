@@ -1,24 +1,19 @@
 # nuvo_web_backend
 
-## Local setup (macOS / Linux)
-
-Use a virtual environment so `pip install` doesn’t touch system Python:
+## Local Setup (macOS / Linux)
 
 ```bash
 # From repo root (Nuvo_backend)
 cd nuvo_web_backend
 python3 -m venv .venv
-source .venv/bin/activate    # On Windows: .venv\Scripts\activate
+source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-Then run the app:
-
-```bash
 python manage.py runserver
 ```
 
 ---
+
+## 📦 Project Architecture
 
 ```
 apps/
@@ -33,17 +28,43 @@ apps/
 
 ## 🔐 Authentication Flow
 
+### Client (Mobile App)
+
 ```
-send-otp
+send-otp  (email required, phone optional)
     ↓
-verify-otp → returns access + refresh
+verify-otp → account auto-created + auto-approved on first login
     ↓
-Frontend checks /auth/me
-    ↓
-If profile not completed → call complete-profile
+If profile not completed → complete-profile
     ↓
 Normal app usage
 ```
+
+### Staff / Makeup Artist
+
+```
+register/staff-makeup  → account created with status PENDING
+    ↓
+Admin approves via admin/approve-user
+    ↓
+send-otp → verify-otp → tokens issued
+    ↓
+Normal app usage
+```
+
+### Admin
+
+```
+register/admin  (full_name, email, phone, password)
+    ↓
+Existing approved admin approves via admin/approve-user
+    ↓
+send-otp → verify-otp → tokens issued
+    ↓
+Full admin access
+```
+
+---
 
 ### 🌍 Base URL
 
@@ -61,6 +82,12 @@ All protected APIs require:
 
 `POST /auth/send-otp/`
 
+**Roles:** `CLIENT` · `STAFF` · `MAKEUP_ARTIST` · `ADMIN`
+
+> **CLIENT:** Only `email` is required. `phone_number` is optional and only validated for format if supplied. Account does not need to exist yet.
+>
+> **STAFF / MAKEUP_ARTIST / ADMIN:** Account must already exist (registered via the register endpoints below). The API verifies the email or phone matches a known account before sending the OTP. Blocked accounts are rejected here.
+
 **Body**
 
 ```json
@@ -70,8 +97,6 @@ All protected APIs require:
   "role": "CLIENT"
 }
 ```
-
-**Roles:** `CLIENT` · `STAFF` · `MAKEUP_ARTIST` · `ADMIN`
 
 **Response**
 
@@ -88,6 +113,10 @@ All protected APIs require:
 ### 2️⃣ Verify OTP (Login)
 
 `POST /auth/verify-otp/`
+
+> **CLIENT:** Account is auto-created and auto-approved on first login. `phone_number` is required only on the very first login. Subsequent logins only need `email`, `role`, and `otp`.
+>
+> **STAFF / MAKEUP_ARTIST / ADMIN:** Returns `403` if the account is still `PENDING`. No tokens are issued until an admin approves the account.
 
 **Body**
 
@@ -113,11 +142,23 @@ All protected APIs require:
       "id": "ee7c55fc-4d49-4aff-b22a-a9df6937a178",
       "email": "user@gmail.com",
       "phone_number": "9999999999",
+      "full_name": "",
       "role": "CLIENT",
       "status": "ACTIVE",
+      "is_approved": true,
       "profile_completed": false
     }
   }
+}
+```
+
+**Error — Pending Approval (403)**
+
+```json
+{
+  "success": false,
+  "message": "Your account is pending admin approval. You will be notified once approved.",
+  "data": {}
 }
 ```
 
@@ -217,9 +258,83 @@ Blacklists the refresh token.
     "id": "0f010853-b7f0-41f1-b2c1-85c257ee3aa0",
     "email": "user@gmail.com",
     "phone_number": "9999999999",
+    "full_name": "",
     "role": "CLIENT",
     "status": "ACTIVE",
+    "is_approved": true,
     "profile_completed": false
+  }
+}
+```
+
+---
+
+### 7️⃣ Register — Staff / Makeup Artist
+
+`POST /auth/register/staff-makeup/`
+
+Self-registration for `STAFF` and `MAKEUP_ARTIST`. Account is created with `status: PENDING` and `is_approved: false`. An admin must approve before the user can log in.
+
+**Body**
+
+```json
+{
+  "email": "jane@example.com",
+  "phone_number": "9999999999",
+  "role": "STAFF"
+}
+```
+
+> `role` must be `STAFF` or `MAKEUP_ARTIST`. Any other value returns a `400`.
+
+**Response (201)**
+
+```json
+{
+  "success": true,
+  "message": "Registration successful. Your account is under review. You will be able to log in once an admin approves your account.",
+  "data": {
+    "id": "uuid",
+    "email": "jane@example.com",
+    "role": "STAFF",
+    "status": "PENDING"
+  }
+}
+```
+
+---
+
+### 8️⃣ Register — Admin
+
+`POST /auth/register/admin/`
+
+Admin self-registration using password credentials. Account starts as `PENDING`. An existing approved admin must approve before login is possible.
+
+**Body**
+
+```json
+{
+  "full_name": "Super Admin",
+  "email": "admin@example.com",
+  "phone_number": "9999999999",
+  "password": "SecurePass123"
+}
+```
+
+> All four fields are required. Password must be at least 8 characters and is stored hashed.
+
+**Response (201)**
+
+```json
+{
+  "success": true,
+  "message": "Admin registration successful. Another admin must approve your account before you can log in.",
+  "data": {
+    "id": "uuid",
+    "email": "admin@example.com",
+    "full_name": "Super Admin",
+    "role": "ADMIN",
+    "status": "PENDING"
   }
 }
 ```
@@ -228,7 +343,7 @@ Blacklists the refresh token.
 
 ## 👤 PROFILE APIs
 
-### 7️⃣ Complete Client Profile
+### 9️⃣ Complete Client Profile
 
 `POST /users/complete/client/`
 
@@ -246,7 +361,7 @@ Blacklists the refresh token.
 
 ---
 
-### 8️⃣ Complete Staff Profile
+### 🔟 Complete Staff Profile
 
 `POST /users/complete/staff/`
 
@@ -267,7 +382,7 @@ Blacklists the refresh token.
 
 ---
 
-### 9️⃣ Complete Makeup Artist Profile
+### 1️⃣1️⃣ Complete Makeup Artist Profile
 
 `POST /users/complete/makeup/`
 
@@ -287,7 +402,7 @@ Blacklists the refresh token.
 
 ---
 
-### 🔟 Get My Profile (Role-Based)
+### 1️⃣2️⃣ Get My Profile (Role-Based)
 
 `GET /users/my-profile/`
 
@@ -295,15 +410,15 @@ Returns profile fields based on the authenticated user's role.
 
 ---
 
-### 1️⃣1️⃣ Update My Profile
+### 1️⃣3️⃣ Update My Profile
 
 `PUT /users/update-profile/`
 
-Body fields depend on role (see Complete Profile bodies above for available fields).
+Body fields depend on role (see Complete Profile bodies above).
 
 ---
 
-### 1️⃣2️⃣ Upload Staff Images (S3)
+### 1️⃣4️⃣ Upload Staff Images (S3)
 
 `POST /users/staff/upload-images/`
 
@@ -314,7 +429,7 @@ Body fields depend on role (see Complete Profile bodies above for available fiel
 | `profile_picture` | file   | _(optional)_ Replaces existing profile picture in S3 |
 | `gallery_images`  | file[] | _(optional)_ Replaces entire gallery in S3           |
 
-At least one of the two fields is required. Old S3 files are deleted before new ones are uploaded.
+At least one field is required. Old S3 files are deleted before new ones are uploaded.
 
 **Response**
 
@@ -333,11 +448,78 @@ At least one of the two fields is required. Old S3 files are deleted before new 
 
 ## 👑 ADMIN APIs
 
-### 1️⃣3️⃣ List Staff
+### 1️⃣5️⃣ Approve User
+
+`POST /auth/admin/approve-user/`
+
+Approves a `PENDING` account (staff, makeup artist, or another admin). Sets `status → ACTIVE` and `is_approved → true`. The calling admin must themselves be approved. Clients cannot be passed here as they never require approval.
+
+**Body**
+
+```json
+{
+  "user_id": "uuid-of-pending-user"
+}
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "User approved successfully",
+  "data": {
+    "id": "uuid",
+    "email": "jane@example.com",
+    "role": "STAFF",
+    "status": "ACTIVE",
+    "is_approved": true
+  }
+}
+```
+
+---
+
+### 1️⃣6️⃣ List Pending Users
+
+`GET /auth/admin/pending-users/`
+
+Returns all accounts awaiting approval. Optionally filter by role.
+
+**Query Parameters**
+
+| Param  | Type   | Description                                      |
+| ------ | ------ | ------------------------------------------------ |
+| `role` | string | _(optional)_ `STAFF` · `MAKEUP_ARTIST` · `ADMIN` |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Pending users fetched",
+  "data": {
+    "total": 3,
+    "results": [
+      {
+        "id": "uuid",
+        "email": "jane@example.com",
+        "phone_number": "9999999999",
+        "full_name": "",
+        "role": "STAFF",
+        "status": "PENDING",
+        "created_at": "2024-06-01 10:00:00"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 1️⃣7️⃣ List Staff
 
 `GET /users/admin/staff/`
-
-Requires role = `ADMIN`
 
 **Query Parameters**
 
@@ -389,11 +571,9 @@ Requires role = `ADMIN`
 
 ---
 
-### 1️⃣4️⃣ List Makeup Artists
+### 1️⃣8️⃣ List Makeup Artists
 
 `GET /users/admin/makeup-artists/`
-
-Requires role = `ADMIN`
 
 **Query Parameters**
 
@@ -441,11 +621,9 @@ Requires role = `ADMIN`
 
 ---
 
-### 1️⃣5️⃣ List Clients
+### 1️⃣9️⃣ List Clients
 
 `GET /users/admin/clients/`
-
-Requires role = `ADMIN`
 
 **Query Parameters**
 
@@ -493,15 +671,15 @@ Requires role = `ADMIN`
 
 ---
 
-### 1️⃣6️⃣ List All Users (Raw)
+### 2️⃣0️⃣ List All Users (Raw)
 
 `GET /users/admin/all-users/`
 
-Requires role = `ADMIN`. Returns basic user records without profile data.
+Returns basic user records without profile data.
 
 ---
 
-### 1️⃣7️⃣ Change User Status
+### 2️⃣1️⃣ Change User Status
 
 `PUT /users/admin/change-status/`
 
@@ -514,11 +692,11 @@ Requires role = `ADMIN`. Returns basic user records without profile data.
 }
 ```
 
-**Status options:** `ACTIVE` · `INACTIVE` · `BLOCKED`
+**Status options:** `ACTIVE` · `INACTIVE` · `BLOCKED` · `PENDING`
 
 ---
 
-### 1️⃣8️⃣ Update Client Subscription
+### 2️⃣2️⃣ Update Client Subscription
 
 `PUT /users/admin/update-subscription/`
 
@@ -700,8 +878,6 @@ Plan names are fixed: `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
 ---
 
 ### 💰 PAYMENT TERMS
-
-Single document — stores the global advance payment percentage.
 
 #### Update Payment Terms
 
