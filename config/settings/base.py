@@ -26,6 +26,7 @@ _INSTALLED_APPS = [
     "apps.users",
     "apps.common",
     "apps.master",
+    "apps.events",
 ]
 if not os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
     _INSTALLED_APPS.insert(_INSTALLED_APPS.index("corsheaders") + 1, "drf_yasg")
@@ -104,3 +105,6 @@ AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
 AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME")
 
 AWS_S3_BASE_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com"
+
+LOCATION_SERVER_URL = os.getenv("LOCATION_SERVER_URL")
+LOCATION_SERVER_TIMEOUT = 5   # seconds, optional

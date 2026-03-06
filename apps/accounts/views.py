@@ -131,8 +131,8 @@ def send_otp(request):
         # ── Generate & store OTP ───────────────────────────────────
         OTP.objects(email=email).delete()
 
-        # otp_code = OTP.generate_otp()
-        otp_code = "123456"   # ← replace with above line in production
+        otp_code = OTP.generate_otp()
+        # otp_code = "123456"   # ← replace with above line in production
 
         OTP(
             email=email,
@@ -140,7 +140,7 @@ def send_otp(request):
             expires_at=OTP.expiry_time()
         ).save()
 
-        # send_otp_email(email, otp_code)
+        send_otp_email(email, otp_code)
 
         return api_response(True, "OTP sent successfully")
 
@@ -634,12 +634,12 @@ def resend_otp(request):
 
         OTP.objects(email=email).delete()
 
-        # new_otp = OTP.generate_otp()
-        new_otp = "123456"   # ← replace in production
+        new_otp = OTP.generate_otp()
+        # new_otp = "123456"   # ← replace in production
 
         OTP(email=email, otp_code=new_otp, expires_at=OTP.expiry_time()).save()
 
-        # send_otp_email(email, new_otp)
+        send_otp_email(email, new_otp)
 
         return api_response(True, "OTP resent successfully")
 
