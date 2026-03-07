@@ -12,6 +12,7 @@ class UserStatus(str, Enum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
     BLOCKED = "BLOCKED"
+    PENDING = "PENDING"          # Awaiting admin approval
 
 
 class SubscriptionPlan(str, Enum):

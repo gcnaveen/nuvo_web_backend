@@ -64,80 +64,52 @@ APPROVAL_REQUIRED_ROLES = {UserRole.STAFF.value, UserRole.MAKEUP_ARTIST.value, U
 @csrf_exempt
 def send_otp(request):
     """
-    Send OTP for login / registration.
+    POST /auth/send-otp/
 
-    Mobile clients (CLIENT role):
-      - email is enough to start; phone can be supplied but is not checked against DB.
-      - A new account will be created on verify_otp if none exists.
+    Body:
+    {
+        "email": "user@gmail.com"
+    }
 
-    Admin / Staff / MakeupArtist:
-      - The account MUST already exist (registered separately).
-      - For ADMIN: we verify that the supplied email OR phone_number matches an
-        existing admin account before sending the OTP.
+    - No role, no phone needed from client.
+    - If account exists: role is read from DB.
+    - If no account: treated as new CLIENT registration.
+    - Blocked accounts are rejected.
+    - Pending accounts: OTP is sent but verify_otp will gate the token.
     """
     if request.method != "POST":
         return api_response(False, "Invalid request method", status=405)
 
     try:
-        body = json.loads(request.body)
-
+        body  = json.loads(request.body)
         email = body.get("email", "").strip()
-        phone = body.get("phone_number", "").strip()
-        role  = body.get("role", "").strip()
 
-        # ── Validate role ──────────────────────────────────────────
-        if not role or role not in [r.value for r in UserRole]:
-            return api_response(False, "Valid role is required", status=400)
-
-        # ── Email is always required ───────────────────────────────
         if not email:
             return api_response(False, "Email is required", status=400)
 
-        from apps.common.validators import validate_email, validate_phone
+        from apps.common.validators import validate_email
         if not validate_email(email):
             return api_response(False, "Invalid email format", status=400)
 
-        # ── For non-CLIENT roles: account must already exist ───────
-        if role in APPROVAL_REQUIRED_ROLES:
-            # Locate account by email; optionally also verify phone matches
-            user = User.objects(email=email, role=role).first()
+        # ── Check if account exists ────────────────────────────────
+        user = User.objects(email=email).first()
 
-            if not user:
-                # Also try by phone if supplied (covers "login with phone" UX)
-                if phone and validate_phone(phone):
-                    user = User.objects(phone_number=phone, role=role).first()
-
-            if not user:
-                return api_response(
-                    False,
-                    "No account found with that email / phone for this role. "
-                    "Please register first.",
-                    status=404
-                )
-
-            # Blocked accounts are dead-ended here
+        if user:
+            # Blocked accounts — stop here, don't send OTP
             if user.status == UserStatus.BLOCKED.value:
                 return api_response(False, "Your account has been blocked.", status=403)
-
-            # Pending accounts get a helpful message but OTP is still sent so
-            # verify_otp can tell them they're awaiting approval.
-            # (No need to stop them; verify_otp will gate the token.)
-
-        # ── For CLIENT: phone is optional but validate if supplied ─
-        else:
-            if phone and not validate_phone(phone):
-                return api_response(False, "Invalid phone number format", status=400)
+            # Pending accounts — OTP sent, verify_otp will handle the gate
 
         # ── Generate & store OTP ───────────────────────────────────
         OTP.objects(email=email).delete()
 
         otp_code = OTP.generate_otp()
-        # otp_code = "123456"   # ← replace with above line in production
+        # otp_code = "123456"  # ← uncomment for testing
 
         OTP(
-            email=email,
-            otp_code=otp_code,
-            expires_at=OTP.expiry_time()
+            email      = email,
+            otp_code   = otp_code,
+            expires_at = OTP.expiry_time(),
         ).save()
 
         send_otp_email(email, otp_code)
@@ -152,20 +124,22 @@ def send_otp(request):
 #  OTP — Verify  (Login)
 # ─────────────────────────────────────────────────────────────
 
+
 @csrf_exempt
 def verify_otp(request):
     """
-    Verify OTP and return JWT tokens.
+    POST /auth/verify-otp/
 
-    CLIENT:
-      - Account is created automatically if it doesn't exist.
-      - is_approved is set to True immediately (no approval needed).
-      - phone_number is required on first registration so we can store it.
+    Body:
+    {
+        "email": "user@gmail.com",
+        "otp":   "123456"
+    }
 
-    STAFF / MAKEUP_ARTIST / ADMIN:
-      - Account must already exist (created via the register endpoints).
-      - If status == PENDING / is_approved == False → return 403 with a clear
-        message. No tokens are issued.
+    - No role or phone needed.
+    - Role is determined from the existing account in DB.
+    - New accounts (no existing user) are auto-created as CLIENT.
+    - STAFF / MAKEUP_ARTIST / ADMIN pending accounts return 403.
     """
     if request.method != "POST":
         return api_response(False, "Invalid request method", status=405)
@@ -173,28 +147,22 @@ def verify_otp(request):
     try:
         body      = json.loads(request.body)
         email     = body.get("email", "").strip()
-        phone     = body.get("phone_number", "").strip()
-        role      = body.get("role", "").strip()
         otp_input = body.get("otp", "").strip()
 
-        # ── Basic validation ───────────────────────────────────────
-        if not email or not role or not otp_input:
-            return api_response(False, "email, role, and otp are required", status=400)
-
-        if role not in [r.value for r in UserRole]:
-            return api_response(False, "Invalid role", status=400)
+        if not email or not otp_input:
+            return api_response(False, "email and otp are required", status=400)
 
         # ── OTP lookup & verification ──────────────────────────────
         try:
             otp_obj = OTP.objects.get(email=email)
         except DoesNotExist:
-            return api_response(False, "OTP not found. Please request again.", status=400)
+            return api_response(False, "OTP not found. Please request a new one.", status=400)
 
         if otp_obj.is_verified:
             return api_response(False, "OTP already used", status=400)
 
         if datetime.utcnow() > otp_obj.expires_at:
-            return api_response(False, "OTP expired", status=400)
+            return api_response(False, "OTP has expired", status=400)
 
         if otp_obj.otp_code != otp_input:
             otp_obj.attempt_count += 1
@@ -210,55 +178,38 @@ def verify_otp(request):
         # ── Resolve or create user ─────────────────────────────────
         user = User.objects(email=email).first()
 
-        if role == UserRole.CLIENT.value:
-            if not user:
-                # New client — phone is required to create the account
-                if not phone:
-                    return api_response(
-                        False,
-                        "phone_number is required for first-time registration",
-                        status=400
-                    )
-                from apps.common.validators import validate_phone
-                if not validate_phone(phone):
-                    return api_response(False, "Invalid phone number format", status=400)
-
-                user = User(
-                    email=email,
-                    phone_number=phone,
-                    role=UserRole.CLIENT.value,
-                    status=UserStatus.ACTIVE.value,
-                    is_approved=True,          # clients are auto-approved
-                )
-                user.save()
-            else:
-                # Returning client — auto-approve in case they were created
-                # before this flag existed
-                if not user.is_approved:
-                    user.is_approved = True
-                    user.status = UserStatus.ACTIVE.value
-                    user.save()
+        if not user:
+            # No account → new CLIENT (phone collected at /users/complete/client/)
+            user = User(
+                email        = email,
+                phone_number = "",
+                role         = UserRole.CLIENT.value,
+                status       = UserStatus.ACTIVE.value,
+                is_approved  = True,
+            )
+            user.save()
 
         else:
-            # STAFF / MAKEUP_ARTIST / ADMIN — account must already exist
-            if not user:
-                return api_response(
-                    False,
-                    "Account not found. Please register first.",
-                    status=404
-                )
-
-            # Gate: not yet approved
-            if not user.is_approved or user.status == UserStatus.PENDING.value:
-                return api_response(
-                    False,
-                    "Your account is pending admin approval. "
-                    "You will be notified once approved.",
-                    status=403
-                )
-
+            # Account exists — apply role-specific gates
             if user.status == UserStatus.BLOCKED.value:
                 return api_response(False, "Your account has been blocked.", status=403)
+
+            if user.role in (UserRole.STAFF.value, UserRole.MAKEUP_ARTIST.value, UserRole.ADMIN.value):
+                # These roles need explicit admin approval
+                if not user.is_approved or user.status == UserStatus.PENDING.value:
+                    return api_response(
+                        False,
+                        "Your account is pending admin approval. "
+                        "You will be notified once approved.",
+                        status=403
+                    )
+
+            elif user.role == UserRole.CLIENT.value:
+                # Returning client — ensure approved
+                if not user.is_approved:
+                    user.is_approved = True
+                    user.status      = UserStatus.ACTIVE.value
+                    user.save()
 
         # ── Issue tokens ───────────────────────────────────────────
         access_token  = generate_access_token(user)
@@ -267,7 +218,7 @@ def verify_otp(request):
         return api_response(True, "Login successful", {
             "access_token":  access_token,
             "refresh_token": refresh_token,
-            "user": build_user_response(user),
+            "user":          build_user_response(user),
         })
 
     except Exception as e:
@@ -358,15 +309,19 @@ def register_staff_or_makeup(request):
 
 
 # ─────────────────────────────────────────────────────────────
-#  Self-Registration — Admin
+#  Self-Registration — Admin  (replace existing register_admin in views.py)
 # ─────────────────────────────────────────────────────────────
+#
+#  Password is now required again because admin_login validates it.
+#  Also add `password = StringField(default="")` back to User model
+#  in apps/users/models.py if you removed it.
 
 @csrf_exempt
 def register_admin(request):
     """
     POST /auth/register/admin/
 
-    Admin self-registration with password credentials.
+    Admin self-registration with email + password.
     Account starts as PENDING / is_approved=False.
     Another existing ADMIN must approve before login is possible.
 
@@ -382,13 +337,14 @@ def register_admin(request):
         return api_response(False, "Invalid request method", status=405)
 
     try:
+        from django.contrib.auth.hashers import make_password
+
         body      = json.loads(request.body)
         full_name = body.get("full_name", "").strip()
         email     = body.get("email", "").strip()
         phone     = body.get("phone_number", "").strip()
         password  = body.get("password", "").strip()
 
-        # ── Validate all required fields ───────────────────────────
         if not all([full_name, email, phone, password]):
             return api_response(
                 False,
@@ -401,28 +357,22 @@ def register_admin(request):
             return api_response(False, "Invalid email format", status=400)
         if not validate_phone(phone):
             return api_response(False, "Invalid phone number", status=400)
-
         if len(password) < 8:
             return api_response(False, "Password must be at least 8 characters", status=400)
 
-        # ── Duplicate checks ───────────────────────────────────────
         if User.objects(email=email).first():
             return api_response(False, "An account with this email already exists", status=409)
         if User.objects(phone_number=phone).first():
-            return api_response(
-                False, "An account with this phone number already exists", status=409
-            )
+            return api_response(False, "An account with this phone number already exists", status=409)
 
-        # ── Hash password and create pending admin account ─────────
-        from django.contrib.auth.hashers import make_password
         user = User(
-            full_name=full_name,
-            email=email,
-            phone_number=phone,
-            password=make_password(password),
-            role=UserRole.ADMIN.value,
-            status=UserStatus.PENDING.value,
-            is_approved=False,
+            full_name    = full_name,
+            email        = email,
+            phone_number = phone,
+            password     = make_password(password),
+            role         = UserRole.ADMIN.value,
+            status       = UserStatus.PENDING.value,
+            is_approved  = False,
         )
         user.save()
 
@@ -431,17 +381,103 @@ def register_admin(request):
             "Admin registration successful. "
             "Another admin must approve your account before you can log in.",
             {
-                "id":       str(user.id),
-                "email":    user.email,
+                "id":        str(user.id),
+                "email":     user.email,
                 "full_name": user.full_name,
-                "role":     user.role,
-                "status":   user.status,
+                "role":      user.role,
+                "status":    user.status,
             },
             status=201,
         )
 
     except Exception as e:
+        return api_response(False, str(e), status=500)   
+
+
+# ─────────────────────────────────────────────────────────────
+#  Admin Login — Email + Password  (add to apps/accounts/views.py)
+# ─────────────────────────────────────────────────────────────
+#
+#  POST /auth/admin/login/
+#
+#  Admin-only endpoint. Validates email + password directly
+#  and returns JWT tokens. No OTP involved.
+#
+#  Add this import at the top of views.py if not already there:
+#  from django.contrib.auth.hashers import check_password
+
+@csrf_exempt
+def admin_login(request):
+    """
+    POST /auth/admin/login/
+
+    Direct email + password login for admin web panel.
+    No OTP step — credentials are validated and tokens issued immediately.
+
+    Body:
+    {
+        "email":    "admin@example.com",
+        "password": "yourpassword"
+    }
+    """
+    if request.method != "POST":
+        return api_response(False, "Invalid request method", status=405)
+
+    try:
+        from django.contrib.auth.hashers import check_password as django_check_password
+
+        body     = json.loads(request.body)
+        email    = body.get("email", "").strip()
+        password = body.get("password", "").strip()
+
+        if not email or not password:
+            return api_response(False, "Email and password are required", status=400)
+
+        # ── Find admin account ─────────────────────────────────────
+        user = User.objects(email=email, role=UserRole.ADMIN.value).first()
+
+        if not user:
+            # Generic message — don't reveal whether email exists
+            return api_response(False, "Invalid email or password", status=401)
+
+        # ── Check account status before checking password ──────────
+        if user.status == UserStatus.BLOCKED.value:
+            return api_response(False, "Your account has been blocked.", status=403)
+
+        if user.status == UserStatus.PENDING.value or not user.is_approved:
+            return api_response(
+                False,
+                "Your account is pending admin approval. "
+                "You will be notified once approved.",
+                status=403
+            )
+
+        # ── Validate password ──────────────────────────────────────
+        if not user.password:
+            return api_response(
+                False,
+                "No password set for this account. "
+                "Please contact another admin to reset your credentials.",
+                status=401
+            )
+
+        if not django_check_password(password, user.password):
+            return api_response(False, "Invalid email or password", status=401)
+
+        # ── Issue tokens ───────────────────────────────────────────
+        access_token  = generate_access_token(user)
+        refresh_token = generate_refresh_token(user)
+
+        return api_response(True, "Login successful", {
+            "access_token":  access_token,
+            "refresh_token": refresh_token,
+            "user":          build_user_response(user),
+        })
+
+    except Exception as e:
         return api_response(False, str(e), status=500)
+
+
 
 
 # ─────────────────────────────────────────────────────────────

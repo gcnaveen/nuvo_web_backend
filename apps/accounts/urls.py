@@ -1,35 +1,20 @@
 # apps/accounts/urls.py
+# Add this to your existing urlpatterns — just the new line shown with ← NEW
+
 from django.urls import path
-from .views import (
-    send_otp,
-    verify_otp,
-    refresh_token,
-    resend_otp,
-    logout,
-    me,
-    change_user_status,
-    # New
-    register_staff_or_makeup,
-    register_admin,
-    approve_user,
-    list_pending_users,
-)
+from . import views
 
 urlpatterns = [
-    # ── OTP / Login flow ──────────────────────────────────────
-    path("send-otp/",       send_otp),
-    path("verify-otp/",     verify_otp),
-    path("refresh-token/",  refresh_token),
-    path("resend-otp/",     resend_otp),
-    path("logout/",         logout),
-    path("me/",             me),
-
-    # ── Self-registration ─────────────────────────────────────
-    path("register/staff-makeup/",  register_staff_or_makeup),
-    path("register/admin/",         register_admin),
-
-    # ── Admin actions ─────────────────────────────────────────
-    path("admin/change-status/",    change_user_status),
-    path("admin/approve-user/",     approve_user),
-    path("admin/pending-users/",    list_pending_users),
+    path("send-otp/",              views.send_otp,               name="send_otp"),
+    path("verify-otp/",            views.verify_otp,             name="verify_otp"),
+    path("refresh-token/",         views.refresh_token,          name="refresh_token"),
+    path("logout/",                views.logout,                 name="logout"),
+    path("resend-otp/",            views.resend_otp,             name="resend_otp"),
+    path("me/",                    views.me,                     name="me"),
+    path("register/staff-makeup/", views.register_staff_or_makeup, name="register_staff_makeup"),
+    path("register/admin/",        views.register_admin,         name="register_admin"),
+    path("admin/login/",           views.admin_login,            name="admin_login"),   # ← NEW
+    path("admin/approve-user/",    views.approve_user,           name="approve_user"),
+    path("admin/pending-users/",   views.list_pending_users,     name="list_pending_users"),
+    path("admin/change-status/",   views.change_user_status,     name="change_user_status"),
 ]

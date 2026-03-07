@@ -1,8 +1,9 @@
+# apps/users/views.py
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from apps.accounts.decorators import require_auth, require_role
 import json
-
+from apps.users.models import User, ClientProfile, StaffProfile, MakeupArtistProfile
 
 def api_response(success, message, data=None, status=200):
     return JsonResponse({
@@ -66,44 +67,90 @@ def update_profile(request):
 @require_auth
 @require_role(["CLIENT"])
 def complete_client_profile(request):
+    """
+    POST /users/complete/client/
+
+    Body:
+    {
+        "full_name":         "Riya Sharma",  ← required
+        "phone_number":      "9999999999",   ← required
+        "city":              "Bangalore",    ← required
+        "state":             "Karnataka",    ← required
+        "country":           "India",        ← required
+        "subscription_plan": "SILVER"        ← optional, default SILVER
+    }
+    """
     if request.method != "POST":
         return api_response(False, "Invalid request method", status=405)
 
-    from apps.users.models import ClientProfile
     from apps.common.constants import SubscriptionPlan
+    from apps.common.validators import validate_phone
 
     try:
-        body = json.loads(request.body)
+        body    = json.loads(request.body)
+        user    = request.user
 
-        full_name        = body.get("full_name")
-        city             = body.get("city")
-        state            = body.get("state")
-        country          = body.get("country")
-        subscription_plan = body.get("subscription_plan", "SILVER")
+        full_name = body.get("full_name", "").strip()
+        phone     = body.get("phone_number", "").strip()
+        city      = body.get("city", "").strip()
+        state     = body.get("state", "").strip()
+        country   = body.get("country", "").strip()
+        plan      = body.get("subscription_plan", SubscriptionPlan.SILVER.value).strip().upper()
 
-        if not all([full_name, city, state, country]):
-            return api_response(False, "All fields are required", status=400)
-
-        if subscription_plan not in [p.value for p in SubscriptionPlan]:
+        # ── Validate required fields ───────────────────────────────
+        if not full_name:
+            return api_response(False, "full_name is required", status=400)
+        if not phone:
+            return api_response(False, "phone_number is required", status=400)
+        if not validate_phone(phone):
+            return api_response(False, "Phone number must be 10 digits", status=400)
+        if not city:
+            return api_response(False, "city is required", status=400)
+        if not state:
+            return api_response(False, "state is required", status=400)
+        if not country:
+            return api_response(False, "country is required", status=400)
+        if plan not in [p.value for p in SubscriptionPlan]:
             return api_response(False, "Invalid subscription plan", status=400)
 
-        if ClientProfile.objects(user=request.user).first():
+        # ── Check phone not already taken by another user ──────────
+        existing = User.objects(phone_number=phone).first()
+        if existing and str(existing.id) != str(user.id):
+            return api_response(
+                False, "This phone number is already registered to another account", status=409
+            )
+
+        # ── Check profile not already completed ────────────────────
+        if ClientProfile.objects(user=user).first():
             return api_response(False, "Profile already completed", status=400)
 
+        # ── Save full_name + phone back to User ────────────────────
+        user.full_name    = full_name
+        user.phone_number = phone
+        user.save()
+
+        # ── Create ClientProfile ───────────────────────────────────
         ClientProfile(
-            user=request.user,
-            full_name=full_name,
-            city=city,
-            state=state,
-            country=country,
-            subscription_plan=subscription_plan
+            user              = user,
+            full_name         = full_name,
+            city              = city,
+            state             = state,
+            country           = country,
+            subscription_plan = plan,
         ).save()
 
-        return api_response(True, "Client profile completed")
+        return api_response(True, "Profile completed successfully", {
+            "full_name":         full_name,
+            "email":             user.email,
+            "phone_number":      phone,
+            "city":              city,
+            "state":             state,
+            "country":           country,
+            "subscription_plan": plan,
+        })
 
     except Exception as e:
         return api_response(False, str(e), status=500)
-
 
 @csrf_exempt
 @require_auth
@@ -579,6 +626,7 @@ def list_makeup_artists(request):
 #
 # ─────────────────────────────────────────────
 
+
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
@@ -586,7 +634,7 @@ def list_clients(request):
     if request.method != "GET":
         return api_response(False, "Invalid request method", status=405)
 
-    from apps.users.models import ClientProfile
+    from apps.users.models import ClientProfile, User
     from mongoengine.queryset.visitor import Q
     from datetime import datetime
 
@@ -595,7 +643,7 @@ def list_clients(request):
         search     = request.GET.get("search", "").strip()
         city       = request.GET.get("city", "").strip()
         plan_type  = request.GET.get("plan_type", "").strip()
-        status     = request.GET.get("status", "").strip()
+        status     = request.GET.get("status", "").strip()   # ACTIVE | INACTIVE | BLOCKED
         start_date = request.GET.get("start_date", "").strip()
         end_date   = request.GET.get("end_date", "").strip()
 
@@ -605,34 +653,35 @@ def list_clients(request):
         except ValueError:
             return api_response(False, "page and page_size must be integers", status=400)
 
-        # ── Build queryset ───────────────────────────────────────────
+        # ── Build queryset on ClientProfile ──────────────────────────
         qs = ClientProfile.objects()
 
-        # Search by name or email
-        # Note: email lives on the User document — we fetch matching user IDs first
+        # Search: match name on profile OR email on the related User
         if search:
-            from apps.accounts.models import User as AuthUser
-            matched_user_ids = AuthUser.objects(
-                email__icontains=search
-            ).scalar("id")
-
+            matched_user_ids = list(
+                User.objects(email__icontains=search).scalar("id")
+            )
             qs = qs.filter(
-                Q(full_name__icontains=search) | Q(user__in=list(matched_user_ids))
+                Q(full_name__icontains=search) | Q(user__in=matched_user_ids)
             )
 
-        # City filter
+        # City filter (on profile)
         if city:
             qs = qs.filter(city__iexact=city)
 
-        # Subscription / plan type
+        # Subscription plan filter (on profile)
         if plan_type:
             qs = qs.filter(subscription_plan__iexact=plan_type)
 
-        # Status filter
+        # Status filter — status lives on User, so filter via the reference
+        # MongoEngine supports filtering on ReferenceField using user__status
         if status:
-            qs = qs.filter(status__iexact=status)
+            matched_user_ids = list(
+                User.objects(status__iexact=status).scalar("id")
+            )
+            qs = qs.filter(user__in=matched_user_ids)
 
-        # Joined date range
+        # Joined date range (on profile)
         if start_date:
             try:
                 qs = qs.filter(joined_date__gte=datetime.strptime(start_date, "%Y-%m-%d"))
@@ -646,34 +695,35 @@ def list_clients(request):
                 return api_response(False, "end_date must be YYYY-MM-DD", status=400)
 
         # ── Pagination ───────────────────────────────────────────────
-        total  = qs.count()
-        offset = (page - 1) * page_size
+        total       = qs.count()
+        offset      = (page - 1) * page_size
         client_list = qs.skip(offset).limit(page_size)
 
-        # ── Serialize (pull email from related User) ─────────────────
+        # ── Serialize — pull email, phone, status from related User ──
         data = []
         for profile in client_list:
-            user_email = profile.user.email if profile.user else None
+            user = profile.user  # dereferences the ReferenceField
             data.append({
                 "id":                str(profile.id),
-                "user_id":           str(profile.user.id) if profile.user else None,
-                "full_name":         profile.full_name,
-                "email":             user_email,
-                "city":              profile.city,
-                "state":             profile.state,
-                "country":           profile.country,
+                "user_id":           str(user.id) if user else None,
+                "full_name":         profile.full_name or "",
+                "email":             user.email        if user else None,
+                "phone_number":      user.phone_number if user else None,
+                "city":              profile.city      or "",
+                "state":             profile.state     or "",
+                "country":           profile.country   or "",
                 "subscription_plan": profile.subscription_plan,
-                "status":            getattr(profile, "status", None),
+                "status":            user.status       if user else None,  # ← from User
                 "joined_date":       str(profile.joined_date) if profile.joined_date else None,
             })
 
         return api_response(True, "Clients list fetched", {
-            "results":    data,
+            "results": data,
             "pagination": {
                 "total":       total,
                 "page":        page,
                 "page_size":   page_size,
-                "total_pages": -(-total // page_size),
+                "total_pages": max(1, -(-total // page_size)),
             }
         })
 
@@ -713,4 +763,108 @@ def update_client_subscription(request):
     profile.save()
 
     return api_response(True, "Subscription updated")
+
+
+#  POST /users/admin/clients/create/
+#
+#  Admin directly creates a client account. No OTP needed.
+#  Account is created ACTIVE + approved immediately.
+#
+#  Body:
+#  {
+#      "full_name":         "Riya Sharma",
+#      "email":             "riya@example.com",
+#      "phone_number":      "9999999999",
+#      "city":              "Bangalore",      (optional)
+#      "state":             "Karnataka",      (optional)
+#      "country":           "India",          (optional)
+#      "subscription_plan": "SILVER"          (optional, default SILVER)
+#  }
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def admin_create_client(request):
+    if request.method != "POST":
+        return api_response(False, "Invalid request method", status=405)
+
+    try:
+        from django.contrib.auth.hashers import make_password
+        from apps.common.constants import UserRole, UserStatus, SubscriptionPlan
+
+        body  = json.loads(request.body)
+
+        full_name = body.get("full_name", "").strip()
+        email     = body.get("email", "").strip()
+        phone     = body.get("phone_number", "").strip()
+        city      = body.get("city", "").strip()
+        state     = body.get("state", "").strip()
+        country   = body.get("country", "India").strip()
+        plan      = body.get("subscription_plan", SubscriptionPlan.SILVER.value).strip().upper()
+
+        # ── Validate required fields ───────────────────────────────
+        if not full_name or not email or not phone:
+            return api_response(
+                False, "full_name, email, and phone_number are required", status=400
+            )
+
+        from apps.common.validators import validate_email, validate_phone
+        if not validate_email(email):
+            return api_response(False, "Invalid email format", status=400)
+        if not validate_phone(phone):
+            return api_response(False, "Invalid phone number (must be 10 digits)", status=400)
+
+        valid_plans = [p.value for p in SubscriptionPlan]
+        if plan not in valid_plans:
+            return api_response(
+                False,
+                f"Invalid subscription_plan. Must be one of: {', '.join(valid_plans)}",
+                status=400
+            )
+
+        # ── Duplicate checks ───────────────────────────────────────
+        if User.objects(email=email).first():
+            return api_response(False, "An account with this email already exists", status=409)
+        if User.objects(phone_number=phone).first():
+            return api_response(False, "An account with this phone number already exists", status=409)
+
+        # ── Create User ────────────────────────────────────────────
+        user = User(
+            full_name    = full_name,
+            email        = email,
+            phone_number = phone,
+            role         = UserRole.CLIENT.value,
+            status       = UserStatus.ACTIVE.value,
+            is_approved  = True,
+        )
+        user.save()
+
+        # ── Create ClientProfile ───────────────────────────────────
+        profile = ClientProfile(
+            user              = user,
+            full_name         = full_name,
+            city              = city,
+            state             = state,
+            country           = country,
+            subscription_plan = plan,
+        )
+        profile.save()
+
+        return api_response(True, "Client created successfully", {
+            "id":                str(profile.id),
+            "user_id":           str(user.id),
+            "full_name":         profile.full_name,
+            "email":             user.email,
+            "phone_number":      user.phone_number,
+            "city":              profile.city or "",
+            "state":             profile.state or "",
+            "country":           profile.country or "",
+            "subscription_plan": profile.subscription_plan,
+            "status":            user.status,
+            "joined_date":       str(profile.joined_date),
+        }, status=201)
+
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
 

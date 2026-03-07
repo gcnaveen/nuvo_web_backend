@@ -118,11 +118,7 @@ All protected APIs require:
 **Body**
 
 ```json
-{
-  "email": "user@gmail.com",
-  "phone_number": "9999999999",
-  "role": "CLIENT"
-}
+{ "email": "user@gmail.com" }
 ```
 
 **Response**
@@ -148,12 +144,7 @@ All protected APIs require:
 **Body**
 
 ```json
-{
-  "email": "user@gmail.com",
-  "phone_number": "9999999999",
-  "role": "CLIENT",
-  "otp": "123456"
-}
+{ "email": "user@gmail.com", "otp": "123456" }
 ```
 
 **Response**
@@ -353,13 +344,14 @@ Account starts as `PENDING`. An existing approved admin must approve before logi
 **Body**
 
 ```json
-{
-  "full_name": "Rakesh AC",
-  "city": "Bangalore",
-  "state": "Karnataka",
-  "country": "India",
-  "subscription_plan": "SILVER"
-}
+    {
+        "full_name":         "Riya Sharma",  ← required
+        "phone_number":      "9999999999",   ← required
+        "city":              "Bangalore",    ← required
+        "state":             "Karnataka",    ← required
+        "country":           "India",        ← required
+        "subscription_plan": "SILVER"        ← optional, default SILVER
+    }
 ```
 
 ---

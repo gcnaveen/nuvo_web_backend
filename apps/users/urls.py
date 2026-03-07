@@ -12,6 +12,7 @@ from .views import (
     list_staff,
     list_makeup_artists,
     list_clients,
+    admin_create_client
 ) 
 
 urlpatterns = [
@@ -28,7 +29,10 @@ urlpatterns = [
     path("api/staff/", list_staff ),
     path("api/makeup-artists/",list_makeup_artists),
     path("api/clients/", list_clients),
+    path("admin/create-client/", admin_create_client),
 ]
+
+
 
 
 
