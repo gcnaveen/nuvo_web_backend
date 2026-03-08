@@ -1,3 +1,4 @@
+# apps/master/models.py
 import uuid
 from datetime import datetime
 from mongoengine import (

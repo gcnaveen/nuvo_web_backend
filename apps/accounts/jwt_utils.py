@@ -27,3 +27,4 @@ def generate_refresh_token(user):
 
 def decode_token(token):
     return jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+

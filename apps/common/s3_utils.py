@@ -1,3 +1,4 @@
+# apps/common/s3_utils.py
 import boto3
 import uuid
 from urllib.parse import urlparse
@@ -42,3 +43,6 @@ def delete_file_from_s3(file_url):
         Bucket=settings.AWS_STORAGE_BUCKET_NAME,
         Key=key
     )
+
+
+

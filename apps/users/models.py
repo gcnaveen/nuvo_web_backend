@@ -132,14 +132,21 @@ class MakeupArtistProfile(Document):
 
     user = ReferenceField(User, required=True, unique=True)
 
-    full_name          = StringField()
-    gender             = StringField()
-    makeup_speciality  = StringField()
+    full_name         = StringField()
+    gender            = StringField()
+    makeup_speciality = StringField()
 
     city    = StringField()
     state   = StringField()
     country = StringField()
 
+    # ── Images (S3 URLs, same pattern as StaffProfile) ────────────
+    profile_picture = URLField()
+    gallery_images  = ListField(URLField())
+
     experience_in_years = IntField()
 
     joined_date = DateTimeField(default=datetime.utcnow)
+
+
+

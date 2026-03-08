@@ -1,8 +1,8 @@
+# apps/master/urls.py
 from django.urls import path
 from .views import *
 
 urlpatterns = [
-
     # Event Themes
     path("themes/create/", create_event_theme),
     path("themes/", list_event_themes),
@@ -17,7 +17,9 @@ urlpatterns = [
 
     # Subscription
     path("subscription/<str:plan_name>/update/", update_subscription_plan),
+    path("subscription/",  list_subscription_plans),
 
     # Payment
     path("payment/update/", update_payment_terms),
+    path("payment/",       get_payment_terms)
 ]

@@ -694,6 +694,9 @@ Returns basic user records without profile data.
 
 ---
 
+
+
+
 ### 🎨 EVENT THEMES
 
 #### Create Event Theme
@@ -863,6 +866,8 @@ Plan names are fixed: `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
 ```
 
 ---
+
+
 
 ## 📅 EVENTS APIs
 
