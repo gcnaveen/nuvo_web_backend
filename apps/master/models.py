@@ -8,7 +8,8 @@ from mongoengine import (
     DateTimeField,
     ListField,
     URLField,
-    FloatField
+    FloatField,
+    DictField
 )
 
 
@@ -34,21 +35,30 @@ class EventTheme(Document):
 # 2️⃣ Uniform Category
 class UniformCategory(Document):
     meta = {"collection": "uniform_categories"}
-
-    id = StringField(primary_key=True, default=lambda: str(uuid.uuid4()))
+ 
+    id            = StringField(primary_key=True, default=lambda: str(uuid.uuid4()))
     category_name = StringField(required=True)
-    unique_key = StringField(required=True, unique=True)
-    description = StringField()
-    images = ListField(URLField())
-    is_active = BooleanField(default=True)
-
-    created_at = DateTimeField(default=datetime.utcnow)
-    updated_at = DateTimeField(default=datetime.utcnow)
-
+    unique_key    = StringField(required=True, unique=True)
+    description   = StringField()
+    images        = ListField(URLField())
+    is_active     = BooleanField(default=True)
+ 
+    # ── Master data fields ──────────────────────────────────────
+    gender        = StringField(default="unisex")   # male | female | unisex
+    price         = FloatField(default=0.0)          # price per unit / per use
+ 
+    # ── Inventory fields ────────────────────────────────────────
+    has_sizes     = BooleanField(default=True)
+    # stock: { "S": {"total": 10, "in_use": 3}, ... }
+    # DictField stores arbitrary key→value; we validate shape in views.
+    stock         = DictField(default=dict)
+ 
+    created_at    = DateTimeField(default=datetime.utcnow)
+    updated_at    = DateTimeField(default=datetime.utcnow)
+ 
     def save(self, *args, **kwargs):
         self.updated_at = datetime.utcnow()
         return super().save(*args, **kwargs)
-
 
 # 3️⃣ Subscription Plan Settings
 class SubscriptionPlanSettings(Document):

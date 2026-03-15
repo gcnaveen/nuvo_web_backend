@@ -419,109 +419,101 @@ def upload_staff_images(request):
 #
 # ─────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. GET /users/api/staff/  — also update the list serializer to include
+#    stage_name and email/phone from user
+# ─────────────────────────────────────────────────────────────────────────────
+ 
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
 def list_staff(request):
     if request.method != "GET":
         return api_response(False, "Invalid request method", status=405)
-
-    from apps.users.models import StaffProfile
-    import mongoengine.queryset.visitor as qv
+ 
     from mongoengine.queryset.visitor import Q
     from datetime import datetime
-
+ 
     try:
-        # ── Read query params ────────────────────────────────────────
         search     = request.GET.get("search", "").strip()
         city       = request.GET.get("city", "").strip()
         package    = request.GET.get("package", "").strip()
-        status     = request.GET.get("status", "").strip()   # assigned | unassigned
+        status     = request.GET.get("status", "").strip()
         start_date = request.GET.get("start_date", "").strip()
         end_date   = request.GET.get("end_date", "").strip()
-
+ 
         try:
             page      = max(1, int(request.GET.get("page", 1)))
             page_size = min(100, max(1, int(request.GET.get("page_size", 15))))
         except ValueError:
             return api_response(False, "page and page_size must be integers", status=400)
-
-        # ── Build MongoEngine queryset ───────────────────────────────
+ 
         qs = StaffProfile.objects()
-
-        # Search: full_name or stage_name
+ 
         if search:
-            qs = qs.filter(
-                Q(full_name__icontains=search) | Q(stage_name__icontains=search)
-            )
-
-        # City filter
+            qs = qs.filter(Q(full_name__icontains=search) | Q(stage_name__icontains=search))
         if city:
             qs = qs.filter(city__iexact=city)
-
-        # Package / membership tier
         if package:
             qs = qs.filter(package__iexact=package)
-
-        # Status: maps "assigned" → onevent, "unassigned" → everything else
         if status == "assigned":
             qs = qs.filter(status="onevent")
         elif status == "unassigned":
             qs = qs.filter(status__ne="onevent")
-
-        # Joined date range
         if start_date:
             try:
                 qs = qs.filter(joined_date__gte=datetime.strptime(start_date, "%Y-%m-%d"))
             except ValueError:
                 return api_response(False, "start_date must be YYYY-MM-DD", status=400)
-
         if end_date:
             try:
                 qs = qs.filter(joined_date__lte=datetime.strptime(end_date, "%Y-%m-%d"))
             except ValueError:
                 return api_response(False, "end_date must be YYYY-MM-DD", status=400)
-
-        # ── Pagination ───────────────────────────────────────────────
-        total  = qs.count()
-        offset = (page - 1) * page_size
-        staff_list = qs.skip(offset).limit(page_size)
-
-        # ── Serialize ────────────────────────────────────────────────
+ 
+        total      = qs.count()
+        staff_list = qs.skip((page - 1) * page_size).limit(page_size)
+ 
         data = []
         for profile in staff_list:
-            user = profile.user          # dereference ReferenceField
+            try:
+                user = profile.user
+                _ = user.id   # force dereference — skip orphans
+            except Exception:
+                continue
+ 
+            # List view returns a lighter payload than detail
             data.append({
                 "id":                  str(profile.id),
-                "user_id":             str(user.id) if user else None,
-                "full_name":           profile.full_name,
-                "stage_name":          profile.stage_name,
-                "gender":              profile.gender,
-                "city":                profile.city,
-                "state":               profile.state,
-                "country":             profile.country,
-                "package":             profile.package,
-                "status":              user.status if user else None,   # ← from User
+                "user_id":             str(user.id),
+                "full_name":           profile.full_name           or "",
+                "stage_name":          profile.stage_name          or "",
+                "gender":              profile.gender              or "",
+                "city":                profile.city                or "",
+                "state":               profile.state               or "",
+                "country":             profile.country             or "",
+                "package":             profile.package             or "",
+                "status":              user.status,
+                "email":               user.email                  or "",
+                "phone_number":        user.phone_number           or "",
                 "price_of_staff":      profile.price_of_staff,
                 "experience_in_years": profile.experience_in_years,
-                "profile_picture":     profile.profile_picture,
+                "profile_picture":     profile.profile_picture     or "",
                 "joined_date":         str(profile.joined_date) if profile.joined_date else None,
             })
-
+ 
         return api_response(True, "Staff list fetched", {
             "results":    data,
             "pagination": {
                 "total":       total,
                 "page":        page,
                 "page_size":   page_size,
-                "total_pages": -(-total // page_size),   # ceiling division
+                "total_pages": max(1, -(-total // page_size)),
             }
         })
-
+ 
     except Exception as e:
         return api_response(False, str(e), status=500)
-
-
 
 
 # ─────────────────────────────────────────────
@@ -818,146 +810,165 @@ def get_client_detail(request, client_id):
         return api_response(False, str(e), status=500)
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# ADD THIS TO apps/users/urls.py
-# ─────────────────────────────────────────────────────────────────────────
-#
-#   from django.urls import path
-#   from . import views
-#
-#   urlpatterns = [
-#       ...existing urls...
-#       path("api/clients/<str:client_id>/", views.get_client_detail),   # ← ADD
-#   ]
-#
-# Make sure this line appears BEFORE any catch-all patterns.
 
-
-
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared serializer — used by get, create, update, list
+# ─────────────────────────────────────────────────────────────────────────────
+ 
+def _serialize_staff(profile):
+    """
+    Full serializer for StaffProfile including all new fields added
+    for the self-registration form (physical, education, languages, work exp).
+    Always dereferences User for email, phone, status.
+    """
+    user = profile.user
+    return {
+        # ── IDs ──────────────────────────────────────────────────
+        "id":                   str(profile.id),
+        "user_id":              str(user.id),
+ 
+        # ── Core identity ─────────────────────────────────────────
+        "full_name":            profile.full_name            or "",
+        "first_name":           profile.first_name           or "",
+        "last_name":            profile.last_name            or "",
+        "stage_name":           profile.stage_name           or "",
+        "gender":               profile.gender               or "",
+        "marital_status":       profile.marital_status       or "",
+        "place_of_birth":       profile.place_of_birth       or "",
+        "date_of_birth":        str(profile.date_of_birth) if profile.date_of_birth else None,
+ 
+        # ── Contact ───────────────────────────────────────────────
+        "email":                user.email                   or "",
+        "phone_number":         user.phone_number            or "",
+        "telephone":            profile.telephone            or "",
+        "cell_phone":           profile.cell_phone           or "",
+ 
+        # ── Location ─────────────────────────────────────────────
+        "address":              profile.address              or "",
+        "city":                 profile.city                 or "",
+        "state":                profile.state                or "",
+        "country":              profile.country              or "",
+ 
+        # ── Physical ─────────────────────────────────────────────
+        "height":               profile.height,
+        "weight":               profile.weight,
+        "shoe_size":            profile.shoe_size            or "",
+        "blazer_size":          profile.blazer_size          or "",
+        "trouser_size":         profile.trouser_size         or "",
+ 
+        # ── Education ────────────────────────────────────────────
+        "is_student":           profile.is_student           if profile.is_student is not None else False,
+        "school":               profile.school               or "",
+        "degree":               profile.degree               or "",
+ 
+        # ── Languages (list of {language, proficiency}) ───────────
+        "languages":            profile.languages            or [],
+ 
+        # ── Work experience ───────────────────────────────────────
+        "hostess_experience":   profile.hostess_experience   if profile.hostess_experience is not None else False,
+        "group_responsible":    profile.group_responsible    if profile.group_responsible  is not None else False,
+        "agency":               profile.agency               or "",
+        "experience_areas":     profile.experience_areas     or [],
+        "work_type":            profile.work_type            or "",
+        "holiday_work":         profile.holiday_work         if profile.holiday_work is not None else False,
+ 
+        # ── Professional (admin-managed) ──────────────────────────
+        "package":              profile.package              or "",
+        "price_of_staff":       profile.price_of_staff,
+        "experience_in_years":  profile.experience_in_years,
+ 
+        # ── Media ─────────────────────────────────────────────────
+        "profile_picture":      profile.profile_picture      or "",
+        "gallery_images":       profile.gallery_images       or [],
+ 
+        # ── Account ───────────────────────────────────────────────
+        "status":               user.status,
+        "is_approved":          user.is_approved,
+        "registration_complete": profile.registration_complete if hasattr(profile, "registration_complete") else True,
+        "joined_date":          str(profile.joined_date) if profile.joined_date else None,
+    }
+ 
+ 
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. GET /users/api/staff/<staff_id>/
+# ─────────────────────────────────────────────────────────────────────────────
+ 
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
 def get_staff_detail(request, staff_id):
-    """
-    GET /users/api/staff/<staff_id>/
-
-    Returns full detail of a single staff member by their StaffProfile ID.
-    """
     if request.method != "GET":
         return api_response(False, "Invalid request method", status=405)
-
     try:
         profile = StaffProfile.objects(id=staff_id).first()
         if not profile:
             return api_response(False, "Staff member not found", status=404)
-
-        user = profile.user
-        if not user:
+        if not profile.user:
             return api_response(False, "Associated user account not found", status=404)
-
-        return api_response(True, "Staff fetched", {
-            "id":                  str(profile.id),
-            "user_id":             str(user.id),
-            "full_name":           profile.full_name or "",
-            "stage_name":          profile.stage_name or "",
-            "gender":              profile.gender or "",
-            "city":                profile.city or "",
-            "state":               profile.state or "",
-            "country":             profile.country or "",
-            "package":             profile.package or "",
-            "price_of_staff":      profile.price_of_staff,
-            "experience_in_years": profile.experience_in_years,
-            "profile_picture":     profile.profile_picture or "",
-            "gallery_images":      profile.gallery_images or [],
-            "status":              user.status,
-            "is_approved":         user.is_approved,
-            "joined_date":         str(profile.joined_date) if profile.joined_date else None,
-        })
-
+        return api_response(True, "Staff fetched", _serialize_staff(profile))
     except Exception as e:
         return api_response(False, str(e), status=500)
 
 
-
-
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. POST /users/admin/staff/create/
+# ─────────────────────────────────────────────────────────────────────────────
+ 
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
 def admin_create_staff(request):
     """
-    POST /users/admin/staff/create/
-
-    Admin directly creates a staff member with full details.
-    Account is created ACTIVE + approved immediately. No OTP needed.
-
-    Body:
-    {
-        "full_name":           "Rahul Sharma",   ← required
-        "email":               "r@ex.com",       ← required
-        "phone_number":        "9999999999",      ← required
-        "stage_name":          "DJ Rahul",        ← optional
-        "gender":              "Male",            ← required
-        "city":                "Bangalore",       ← required
-        "state":               "Karnataka",       ← optional
-        "country":             "India",           ← optional
-        "package":             "SILVER",          ← optional, default SILVER
-        "experience_in_years": 3,                 ← optional, default 0
-        "price_of_staff":      5000               ← optional, default 0
-    }
+    Admin quick-creates a staff account. Stage name is auto-generated.
+ 
+    Required:  full_name, email, phone_number, gender, city
+    Optional:  stage_name (auto-generated if omitted), state, country,
+               package, experience_in_years, price_of_staff
     """
     if request.method != "POST":
         return api_response(False, "Invalid request method", status=405)
-
     try:
         from apps.common.constants import UserRole, UserStatus
         from apps.common.validators import validate_email, validate_phone
-
+        from apps.users.staff_registration import _generate_stage_name
+ 
         body = json.loads(request.body)
-
-        full_name   = body.get("full_name", "").strip()
-        email       = body.get("email", "").strip()
-        phone       = body.get("phone_number", "").strip()
-        stage_name  = body.get("stage_name", "").strip()
-        gender      = body.get("gender", "").strip()
-        city        = body.get("city", "").strip()
-        state       = body.get("state", "").strip()
-        country     = body.get("country", "India").strip()
-        package     = body.get("package", "SILVER").strip().upper()
-        experience  = int(body.get("experience_in_years", 0) or 0)
-        price       = float(body.get("price_of_staff", 0) or 0)
-
-        # ── Validate required fields ───────────────────────────
-        if not full_name:
-            return api_response(False, "full_name is required", status=400)
-        if not email:
-            return api_response(False, "email is required", status=400)
-        if not validate_email(email):
-            return api_response(False, "Invalid email format", status=400)
-        if not phone:
-            return api_response(False, "phone_number is required", status=400)
-        if not validate_phone(phone):
-            return api_response(False, "Phone number must be 10 digits", status=400)
-        if not gender:
-            return api_response(False, "gender is required", status=400)
-        if not city:
-            return api_response(False, "city is required", status=400)
-
+ 
+        full_name  = body.get("full_name", "").strip()
+        email      = body.get("email", "").strip().lower()
+        phone      = body.get("phone_number", "").strip()
+        stage_name = body.get("stage_name", "").strip()
+        gender     = body.get("gender", "").strip()
+        city       = body.get("city", "").strip()
+        state      = body.get("state", "").strip()
+        country    = body.get("country", "India").strip()
+        package    = body.get("package", "SILVER").strip().upper()
+        experience = int(body.get("experience_in_years", 0) or 0)
+        price      = float(body.get("price_of_staff", 0) or 0)
+ 
+        # ── Validate ──────────────────────────────────────────────
+        if not full_name:  return api_response(False, "full_name is required", status=400)
+        if not email:      return api_response(False, "email is required", status=400)
+        if not validate_email(email): return api_response(False, "Invalid email format", status=400)
+        if not phone:      return api_response(False, "phone_number is required", status=400)
+        if not validate_phone(phone): return api_response(False, "Phone number must be 10 digits", status=400)
+        if not gender:     return api_response(False, "gender is required", status=400)
+        if not city:       return api_response(False, "city is required", status=400)
+ 
         valid_packages = ["PLATINUM", "DIAMOND", "GOLD", "SILVER", "BRONZE"]
         if package not in valid_packages:
-            return api_response(
-                False,
-                f"Invalid package. Must be one of: {', '.join(valid_packages)}",
-                status=400
-            )
-
-        # ── Duplicate checks ───────────────────────────────────
+            return api_response(False, f"Invalid package. Must be one of: {', '.join(valid_packages)}", status=400)
+ 
         if User.objects(email=email).first():
             return api_response(False, "An account with this email already exists", status=409)
         if User.objects(phone_number=phone).first():
             return api_response(False, "An account with this phone number already exists", status=409)
-
-        # ── Create User ────────────────────────────────────────
+ 
+        # ── Auto-generate stage name if not provided ──────────────
+        if not stage_name:
+            stage_name = _generate_stage_name()
+ 
+        # ── Create User ───────────────────────────────────────────
         user = User(
             full_name    = full_name,
             email        = email,
@@ -967,8 +978,8 @@ def admin_create_staff(request):
             is_approved  = True,
         )
         user.save()
-
-        # ── Create StaffProfile ────────────────────────────────
+ 
+        # ── Create StaffProfile ───────────────────────────────────
         profile = StaffProfile(
             user                = user,
             full_name           = full_name,
@@ -980,26 +991,12 @@ def admin_create_staff(request):
             package             = package,
             experience_in_years = experience,
             price_of_staff      = price,
+            registration_complete = True,
         )
         profile.save()
-
-        return api_response(True, "Staff created successfully", {
-            "id":                  str(profile.id),
-            "user_id":             str(user.id),
-            "full_name":           profile.full_name,
-            "stage_name":          profile.stage_name or "",
-            "email":               user.email,
-            "phone_number":        user.phone_number,
-            "gender":              profile.gender,
-            "city":                profile.city or "",
-            "state":               profile.state or "",
-            "country":             profile.country or "",
-            "package":             profile.package,
-            "experience_in_years": profile.experience_in_years,
-            "price_of_staff":      profile.price_of_staff,
-            "status":              user.status,
-        }, status=201)
-
+ 
+        return api_response(True, "Staff created successfully", _serialize_staff(profile), status=201)
+ 
     except Exception as e:
         return api_response(False, str(e), status=500)
 
@@ -1035,6 +1032,8 @@ def admin_delete_staff(request, staff_id):
 
     except Exception as e:
         return api_response(False, str(e), status=500)
+
+
 
 
 
@@ -1230,103 +1229,112 @@ def admin_delete_gallery_image(request, staff_id):
 
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. PUT /users/admin/staff/<staff_id>/update/
+# ─────────────────────────────────────────────────────────────────────────────
+ 
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
 def admin_update_staff(request, staff_id):
     """
-    PUT /users/admin/staff/<staff_id>/update/
-
-    Admin can update any field on a staff member's profile + account status.
-
-    Body (all optional — only supplied fields are updated):
-    {
-        "full_name":           "Rahul Sharma",
-        "stage_name":          "DJ Rahul",
-        "gender":              "Male",
-        "city":                "Bangalore",
-        "state":               "Karnataka",
-        "country":             "India",
-        "package":             "GOLD",
-        "experience_in_years": 4,
-        "price_of_staff":      6000,
-        "status":              "ACTIVE"   ← updates User.status
-    }
+    Full profile update — all fields optional.
+ 
+    Accepts all StaffProfile fields including:
+      full_name, stage_name, gender, marital_status, place_of_birth,
+      telephone, cell_phone, address, city, state, country,
+      height, weight, shoe_size, blazer_size, trouser_size,
+      is_student, school, degree,
+      languages         (list of {language, proficiency}),
+      hostess_experience, group_responsible, agency,
+      experience_areas  (list of strings),
+      work_type, holiday_work,
+      package, experience_in_years, price_of_staff,
+      status            (updates User.status)
     """
     if request.method != "PUT":
         return api_response(False, "Invalid request method", status=405)
-
     try:
         profile = StaffProfile.objects(id=staff_id).first()
         if not profile:
             return api_response(False, "Staff member not found", status=404)
-
+ 
         user = profile.user
         if not user:
             return api_response(False, "Associated user not found", status=404)
-
+ 
         body = json.loads(request.body)
-
-        # ── Profile fields ─────────────────────────────────────────
-        PROFILE_FIELDS = [
-            "full_name", "stage_name", "gender",
-            "city", "state", "country", "stage_name",
+ 
+        # ── String fields on profile ──────────────────────────────
+        STRING_FIELDS = [
+            "full_name", "stage_name", "gender", "marital_status",
+            "place_of_birth", "telephone", "cell_phone", "address",
+            "city", "state", "country", "shoe_size", "blazer_size",
+            "trouser_size", "school", "degree", "agency", "work_type",
         ]
-        for field in PROFILE_FIELDS:
+        for field in STRING_FIELDS:
             if field in body:
-                val = body[field].strip() if isinstance(body[field], str) else body[field]
+                val = body[field].strip() if isinstance(body[field], str) else (body[field] or "")
                 setattr(profile, field, val)
-
+ 
+        # ── Numeric fields ────────────────────────────────────────
         if "experience_in_years" in body:
             profile.experience_in_years = int(body["experience_in_years"] or 0)
-
         if "price_of_staff" in body:
             profile.price_of_staff = float(body["price_of_staff"] or 0)
-
+        if "height" in body:
+            profile.height = float(body["height"]) if body["height"] not in (None, "", 0) else None
+        if "weight" in body:
+            profile.weight = float(body["weight"]) if body["weight"] not in (None, "", 0) else None
+ 
+        # ── Boolean fields ────────────────────────────────────────
+        for bool_field in ["is_student", "hostess_experience", "group_responsible", "holiday_work"]:
+            if bool_field in body:
+                profile.__setattr__(bool_field, bool(body[bool_field]))
+ 
+        # ── Package ───────────────────────────────────────────────
         if "package" in body:
             pkg = body["package"].strip().upper()
             valid = ["PLATINUM", "DIAMOND", "GOLD", "SILVER", "BRONZE"]
             if pkg not in valid:
                 return api_response(False, f"Invalid package. Must be one of: {', '.join(valid)}", status=400)
             profile.package = pkg
-
-        # Sync full_name to User as well
-        if "full_name" in body:
-            user.full_name = body["full_name"].strip()
-
-        # ── Status (lives on User) ─────────────────────────────────
+ 
+        # ── Languages (list of {language, proficiency}) ───────────
+        if "languages" in body:
+            langs = body["languages"]
+            if isinstance(langs, list):
+                # Filter out empty entries
+                profile.languages = [
+                    {"language": l.get("language", "").strip(), "proficiency": l.get("proficiency", "").strip()}
+                    for l in langs if isinstance(l, dict) and l.get("language", "").strip()
+                ]
+ 
+        # ── Experience areas (list of strings) ────────────────────
+        if "experience_areas" in body:
+            areas = body["experience_areas"]
+            if isinstance(areas, list):
+                profile.experience_areas = [str(a).strip() for a in areas if a]
+ 
+        # ── Status lives on User ──────────────────────────────────
         if "status" in body:
             new_status = body["status"].strip().upper()
-            valid_statuses = ["ACTIVE", "INACTIVE", "BLOCKED"]
+            valid_statuses = ["ACTIVE", "INACTIVE", "BLOCKED", "ONEVENT"]
             if new_status not in valid_statuses:
                 return api_response(False, f"Invalid status. Must be one of: {', '.join(valid_statuses)}", status=400)
             user.status = new_status
-
+ 
+        # ── Sync full_name to User ────────────────────────────────
+        if "full_name" in body and body["full_name"].strip():
+            user.full_name = body["full_name"].strip()
+ 
         profile.save()
         user.save()
-
-        return api_response(True, "Staff updated successfully", {
-            "id":                  str(profile.id),
-            "user_id":             str(user.id),
-            "full_name":           profile.full_name,
-            "stage_name":          profile.stage_name or "",
-            "gender":              profile.gender or "",
-            "city":                profile.city or "",
-            "state":               profile.state or "",
-            "country":             profile.country or "",
-            "package":             profile.package or "",
-            "experience_in_years": profile.experience_in_years,
-            "price_of_staff":      profile.price_of_staff,
-            "status":              user.status,
-            "profile_picture":     profile.profile_picture or "",
-            "gallery_images":      profile.gallery_images or [],
-            "joined_date":         str(profile.joined_date) if profile.joined_date else None,
-        })
-
+ 
+        return api_response(True, "Staff updated successfully", _serialize_staff(profile))
+ 
     except Exception as e:
         return api_response(False, str(e), status=500)
-
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────

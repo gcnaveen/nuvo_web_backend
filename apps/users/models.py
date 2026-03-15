@@ -93,7 +93,7 @@ class ClientProfile(Document):
 
 
 # ─────────────────────────────────────────────────────────────
-#  StaffProfile
+# StaffProfile
 # ─────────────────────────────────────────────────────────────
 
 class StaffProfile(Document):
@@ -101,26 +101,68 @@ class StaffProfile(Document):
 
     user = ReferenceField(User, required=True, unique=True)
 
+    # ── Basic identity ─────────────────────────────────────────
     full_name   = StringField()
-    stage_name  = StringField()
+    stage_name  = StringField()      # auto-generated on self-register
     gender      = StringField()
-    date_of_birth = DateTimeField()
 
+    # ── Personal info (from registration form) ─────────────────
+    first_name      = StringField()
+    last_name       = StringField()
+    date_of_birth   = DateTimeField()
+    place_of_birth  = StringField()
+    marital_status  = StringField()  # single | married
+    address         = StringField()
+
+    # ── Location ───────────────────────────────────────────────
     city    = StringField()
     state   = StringField()
     country = StringField()
 
+    # ── Contact ────────────────────────────────────────────────
+    telephone    = StringField()
+    cell_phone   = StringField()
+
+    # ── Physical dimensions ────────────────────────────────────
+    height       = FloatField()   # cm
+    weight       = FloatField()   # kg
+    shoe_size    = StringField()  # UK size
+    blazer_size  = StringField()
+    trouser_size = StringField()
+
+    # ── Education ──────────────────────────────────────────────
+    is_student  = BooleanField(default=False)
+    school      = StringField()
+    degree      = StringField()
+
+    # ── Languages (up to 4, stored as list of dicts) ──────────
+    # Each item: { "language": "English", "proficiency": "Fluent" }
+    languages = ListField(default=list)
+
+    # ── Work experience ────────────────────────────────────────
+    hostess_experience  = BooleanField(default=False)
+    group_responsible   = BooleanField(default=False)
+    agency              = StringField()
+    experience_areas    = ListField(StringField())  # actor/actress, modeling, etc.
+    work_type           = StringField()   # full-time | part-time | both
+    holiday_work        = BooleanField(default=False)
+
+    # ── Professional (admin-managed) ───────────────────────────
+    package             = StringField(default="SILVER")
+    price_of_staff      = FloatField(default=0)
+    experience_in_years = IntField(default=0)
+
+    # ── Media ──────────────────────────────────────────────────
     profile_picture = URLField()
     gallery_images  = ListField(URLField())
 
-    height = FloatField()
-    weight = FloatField()
-
-    package             = StringField()
-    price_of_staff      = FloatField()
-    experience_in_years = IntField()
+    # ── Meta ───────────────────────────────────────────────────
+    # PENDING = self-registered, waiting admin review
+    # (status lives on User but this tracks registration flow)
+    registration_complete = BooleanField(default=False)
 
     joined_date = DateTimeField(default=datetime.utcnow)
+
 
 
 # ─────────────────────────────────────────────────────────────
