@@ -433,15 +433,15 @@ def delete_uniform_category(request, category_id):
 
 
 VALID_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "OS"]  # OS = one size / free size
-
-
+ 
+ 
 def _calc_stock_totals(stock: dict) -> dict:
     """Aggregate total, in_use, available across all sizes."""
     total  = sum(v.get("total",  0) for v in stock.values())
     in_use = sum(v.get("in_use", 0) for v in stock.values())
     return {"total": total, "in_use": in_use, "available": total - in_use}
-
-
+ 
+ 
 def _ser_inventory(cat) -> dict:
     """Full serializer for a uniform category used as inventory item."""
     totals = _calc_stock_totals(cat.stock or {})
@@ -455,33 +455,33 @@ def _ser_inventory(cat) -> dict:
         "is_active":     cat.is_active,
         "gender":        cat.gender        or "unisex",
         "price":         cat.price         if cat.price is not None else 0.0,
-
+ 
         # ── Inventory ─────────────────────────────────────────────
         "has_sizes":     cat.has_sizes if cat.has_sizes is not None else True,
         "stock":         cat.stock     or {},
-
+ 
         # ── Aggregates (computed, not stored) ─────────────────────
         "total_stock":      totals["total"],
         "total_in_use":     totals["in_use"],
         "total_available":  totals["available"],
-
+ 
         # ── Meta ──────────────────────────────────────────────────
         "created_at": str(cat.created_at) if cat.created_at else None,
         "updated_at": str(cat.updated_at) if cat.updated_at else None,
     }
-
-
+ 
+ 
 # ── 1. List Inventory ─────────────────────────────────────────────────────────
-
+ 
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
 def list_inventory(request):
     """
     GET /master/inventory/
-
+ 
     Returns all uniform categories enriched with stock data.
-
+ 
     Query params (all optional):
       search      — category_name contains (case-insensitive)
       category    — exact unique_key match
@@ -492,19 +492,19 @@ def list_inventory(request):
         return api_response(False, "Invalid method", status=405)
     try:
         qs = UniformCategory.objects()
-
+ 
         if s := request.GET.get("search", "").strip():
             qs = qs.filter(category_name__icontains=s)
-
+ 
         if cat := request.GET.get("category", "").strip():
             qs = qs.filter(unique_key=cat)
-
+ 
         if active := request.GET.get("is_active", "").strip().lower():
             qs = qs.filter(is_active=(active != "false"))
-
+ 
         qs = qs.order_by("category_name")
         items = [_ser_inventory(c) for c in qs]
-
+ 
         # low_stock filter (post-query since it's computed)
         if request.GET.get("low_stock", "").lower() == "true":
             items = [
@@ -512,14 +512,14 @@ def list_inventory(request):
                 if i["total_stock"] > 0
                 and (i["total_available"] / i["total_stock"]) < 0.2
             ]
-
+ 
         return api_response(True, "Inventory fetched", items)
     except Exception as e:
         return api_response(False, str(e), status=500)
-
-
+ 
+ 
 # ── 2. Get Single Inventory Item ──────────────────────────────────────────────
-
+ 
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
@@ -534,20 +534,20 @@ def get_inventory_item(request, category_id):
         return api_response(True, "Inventory item fetched", _ser_inventory(cat))
     except Exception as e:
         return api_response(False, str(e), status=500)
-
-
+ 
+ 
 # ── 3. Update Stock ───────────────────────────────────────────────────────────
-
+ 
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
 def update_stock(request, category_id):
     """
     PUT /master/inventory/<category_id>/stock/
-
+ 
     Updates stock quantities. Admin can only change "total" (owned quantity).
     "in_use" is managed by the events system — sending it is ignored.
-
+ 
     Body:
     {
         "has_sizes": true,
@@ -558,7 +558,7 @@ def update_stock(request, category_id):
             "XL": {"total": 10}
         }
     }
-
+ 
     For free-size items (has_sizes=false):
     {
         "has_sizes": false,
@@ -566,12 +566,13 @@ def update_stock(request, category_id):
             "OS": {"total": 50}
         }
     }
-
+ 
     Rules:
-    - total cannot be less than current in_use (would make available negative)
+    - total cannot be less than in_use (would make available negative)
+    - Admin can now also supply in_use to manually correct assignments
+    - If in_use is omitted, existing value is preserved
     - Size keys are preserved as provided (allows custom sizes beyond standard set)
     - Removing a size key removes it from stock (use with care)
-    - in_use is always preserved from the existing record
     """
     if request.method != "PUT":
         return api_response(False, "Invalid method", status=405)
@@ -579,72 +580,73 @@ def update_stock(request, category_id):
         cat = UniformCategory.objects(id=category_id).first()
         if not cat:
             return api_response(False, "Uniform category not found", status=404)
-
+ 
         body = json.loads(request.body)
         new_stock  = body.get("stock", {})
         has_sizes  = body.get("has_sizes")
-
+ 
         if not isinstance(new_stock, dict):
             return api_response(False, "stock must be an object", status=400)
-
+ 
         # Validate each size entry
         existing_stock = cat.stock or {}
         validated_stock = {}
-
+ 
         for size_key, size_data in new_stock.items():
             if not isinstance(size_data, dict):
                 return api_response(False, f"stock.{size_key} must be an object", status=400)
-
-            new_total = int(size_data.get("total", 0))
+ 
+            new_total  = int(size_data.get("total", 0))
+            new_in_use = int(size_data.get("in_use", existing_stock.get(size_key, {}).get("in_use", 0)))
+ 
             if new_total < 0:
                 return api_response(False, f"stock.{size_key}.total cannot be negative", status=400)
-
-            # Preserve existing in_use — events system manages this
-            existing_in_use = existing_stock.get(size_key, {}).get("in_use", 0)
-            if new_total < existing_in_use:
+            if new_in_use < 0:
+                return api_response(False, f"stock.{size_key}.in_use cannot be negative", status=400)
+            if new_total < new_in_use:
                 return api_response(
                     False,
-                    f"stock.{size_key}.total ({new_total}) cannot be less than current in_use ({existing_in_use})",
+                    f"stock.{size_key}.total ({new_total}) cannot be less than in_use ({new_in_use})",
                     status=400
                 )
-
+ 
             validated_stock[size_key] = {
                 "total":  new_total,
-                "in_use": existing_in_use,   # preserved, not overwritten
+                "in_use": new_in_use,
             }
-
+ 
         cat.stock = validated_stock
-
+ 
         if has_sizes is not None:
             cat.has_sizes = bool(has_sizes)
-
+ 
         cat.save()
         return api_response(True, "Stock updated successfully", _ser_inventory(cat))
-
+ 
     except (json.JSONDecodeError, ValueError) as e:
         return api_response(False, f"Invalid request body: {e}", status=400)
     except Exception as e:
         return api_response(False, str(e), status=500)
-
-
+ 
+ 
 # ── 4. Increment / Decrement in_use (called by events system) ────────────────
-
+ 
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
 def adjust_in_use(request, category_id):
     """
     POST /master/inventory/<category_id>/adjust/
-
+ 
     Called when assigning/returning uniforms to events.
     Increments or decrements in_use for a specific size.
-
+ 
     Body:
     {
         "size":   "M",
         "delta":  3      ← positive = assign, negative = return
     }
-
+ 
     Returns 400 if assignment would exceed available stock.
     """
     if request.method != "POST":
@@ -653,23 +655,23 @@ def adjust_in_use(request, category_id):
         cat = UniformCategory.objects(id=category_id).first()
         if not cat:
             return api_response(False, "Uniform category not found", status=404)
-
+ 
         body  = json.loads(request.body)
         size  = body.get("size", "").strip()
         delta = int(body.get("delta", 0))
-
+ 
         if not size:
             return api_response(False, "size is required", status=400)
         if delta == 0:
             return api_response(False, "delta cannot be 0", status=400)
-
+ 
         stock = cat.stock or {}
         if size not in stock:
             return api_response(False, f"Size '{size}' not found in stock", status=404)
-
+ 
         entry = stock[size]
         new_in_use = entry.get("in_use", 0) + delta
-
+ 
         if new_in_use < 0:
             return api_response(False, f"Cannot return more than currently in use for size {size}", status=400)
         if new_in_use > entry.get("total", 0):
@@ -679,28 +681,28 @@ def adjust_in_use(request, category_id):
                 f"Not enough stock for size {size}. Available: {available}, Requested: {delta}",
                 status=400
             )
-
+ 
         stock[size]["in_use"] = new_in_use
         cat.stock = stock
         cat.save()
-
+ 
         return api_response(True, "Stock adjusted", _ser_inventory(cat))
-
+ 
     except (json.JSONDecodeError, ValueError) as e:
         return api_response(False, f"Invalid request body: {e}", status=400)
     except Exception as e:
         return api_response(False, str(e), status=500)
-
-
+ 
+ 
 # ── 5. Get Inventory Summary (dashboard widget) ───────────────────────────────
-
+ 
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
 def inventory_summary(request):
     """
     GET /master/inventory/summary/
-
+ 
     Returns high-level stats for a dashboard widget.
     {
         "total_categories": 12,
@@ -714,12 +716,12 @@ def inventory_summary(request):
         return api_response(False, "Invalid method", status=405)
     try:
         cats = UniformCategory.objects(is_active=True)
-
+ 
         total_categories = 0
         total_items      = 0
         total_in_use     = 0
         low_stock_count  = 0
-
+ 
         for cat in cats:
             total_categories += 1
             t = _calc_stock_totals(cat.stock or {})
@@ -727,7 +729,7 @@ def inventory_summary(request):
             total_in_use  += t["in_use"]
             if t["total"] > 0 and (t["available"] / t["total"]) < 0.2:
                 low_stock_count += 1
-
+ 
         return api_response(True, "Inventory summary", {
             "total_categories": total_categories,
             "total_items":      total_items,
@@ -737,7 +739,6 @@ def inventory_summary(request):
         })
     except Exception as e:
         return api_response(False, str(e), status=500)
-
 
 
 

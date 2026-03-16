@@ -1,45 +1,59 @@
-# nuvo_web_backend
+# NUVÓ Web Backend
 
-## Local Setup (macOS / Linux)
+Django + MongoEngine REST API backend for the NUVÓ Hosting Agency admin panel and public landing page.
+
+---
+
+## 📦 Project Structure
+
+```
+backend_code/
+├── manage.py
+├── requirements.txt
+├── config/
+│   ├── urls.py               ← Root URL config
+│   └── settings/
+│       ├── base.py           ← Shared settings
+│       ├── dev.py            ← Local dev overrides
+│       └── prod.py           ← Production overrides
+└── apps/
+    ├── accounts/             → Auth: OTP, JWT, middleware, decorators
+    ├── users/                → User & profile management + self-registration
+    ├── common/               → S3, PhonePe, location server, validators
+    ├── master/               → Event themes, uniforms, inventory, plans, payment terms
+    └── events/               → Event booking, crew allocation, payments, live tracking
+```
+
+---
+
+## 🚀 Local Setup
 
 ```bash
-# From repo root (Nuvo_backend)
-cd nuvo_web_backend
+cd backend_code
 python3 -m venv .venv
-source .venv/bin/activate    # Windows: .venv\Scripts\activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python manage.py runserver
 ```
 
 ---
 
-## 📦 Project Architecture
-
-```
-apps/
-│
-├── accounts/     → Auth, OTP, JWT, Middleware
-├── users/        → Profile & Business Logic
-├── common/       → Utilities (S3, PhonePe, Location server)
-├── master/       → Event Themes, Uniforms, Subscriptions, Payment Terms
-└── events/       → Event booking, crew allocation, payments, live tracking
-```
-
----
-
 ## ⚙️ Required Settings
 
-Add these to your `config/settings/base.py` (or use environment variables):
+Add these to `config/settings/base.py` or as environment variables in `.env`:
 
 ```python
-# AWS S3
-AWS_ACCESS_KEY_ID     = "..."
-AWS_SECRET_ACCESS_KEY = "..."
-AWS_STORAGE_BUCKET_NAME = "..."
-AWS_S3_REGION_NAME    = "ap-south-1"
+# MongoDB
+MONGODB_URI = "mongodb://localhost:27017/nuvo"
 
-# PhonePe Payment Gateway
-PHONEPE_MERCHANT_ID  = "PGTESTPAYUAT"          # sandbox merchant ID
+# AWS S3  (used for profile pictures, gallery images, uniform/theme images)
+AWS_ACCESS_KEY_ID        = "..."
+AWS_SECRET_ACCESS_KEY    = "..."
+AWS_STORAGE_BUCKET_NAME  = "..."
+AWS_S3_REGION_NAME       = "ap-south-1"
+
+# PhonePe Payment Gateway (sandbox)
+PHONEPE_MERCHANT_ID  = "PGTESTPAYUAT"
 PHONEPE_SALT_KEY     = "your-salt-key"
 PHONEPE_SALT_INDEX   = 1
 PHONEPE_BASE_URL     = "https://api-preprod.phonepe.com/apis/pg-sandbox"
@@ -53,95 +67,79 @@ LOCATION_SERVER_TIMEOUT = 5   # seconds
 
 ---
 
+## 🌍 Base URL
+
+```
+http://127.0.0.1:8000/api/
+```
+
+All protected endpoints require:
+
+```
+Authorization: Bearer <ACCESS_TOKEN>
+```
+
+---
+
 ## 🔐 Authentication Flow
 
 ### Client (Mobile App)
 
 ```
-send-otp  (email required, phone optional)
-    ↓
-verify-otp → account auto-created + auto-approved on first login
-    ↓
-If profile not completed → complete-profile
-    ↓
-Normal app usage
+POST /auth/send-otp/        → email required, phone optional
+POST /auth/verify-otp/      → account auto-created + auto-approved on first login
+                              → if profile incomplete, complete it next
+POST /users/complete/client/
 ```
 
-### Staff / Makeup Artist
+### Staff (Public Self-Registration via Landing Page)
 
 ```
-register/staff-makeup  → account created with status PENDING
-    ↓
-Admin approves via admin/approve-user
-    ↓
-send-otp → verify-otp → tokens issued
-    ↓
-Normal app usage
+POST /users/register/staff/ → multipart/form-data, no auth required
+                              → status set to INACTIVE, pending admin review
+                              → stage name auto-generated and returned
+Admin approves via /auth/admin/approve-user/
+POST /auth/send-otp/  →  POST /auth/verify-otp/  →  tokens issued
+```
+
+### Staff / Makeup Artist (Admin-Created)
+
+```
+POST /auth/register/staff-makeup/  → status PENDING
+Admin approves via /auth/admin/approve-user/
+POST /auth/send-otp/  →  POST /auth/verify-otp/  →  tokens issued
 ```
 
 ### Admin
 
 ```
-register/admin  (full_name, email, phone, password)
-    ↓
-Existing approved admin approves via admin/approve-user
-    ↓
-send-otp → verify-otp → tokens issued
-    ↓
-Full admin access
+POST /auth/register/admin/          → status PENDING, password required
+Existing admin approves via /auth/admin/approve-user/
+POST /auth/send-otp/  →  POST /auth/verify-otp/  →  tokens issued
 ```
 
 ---
 
-## 🌍 Base URL
+## 🔑 AUTH APIs (`/api/auth/`)
 
-`http://127.0.0.1:8000/api/`
-
-All protected APIs require:
-
-`Authorization: Bearer <ACCESS_TOKEN>`
-
----
-
-## 🔐 AUTH APIs
-
-### 1️⃣ Send OTP
+### Send OTP
 
 `POST /auth/send-otp/`
 
-**Roles:** `CLIENT` · `STAFF` · `MAKEUP_ARTIST` · `ADMIN`
-
-> **CLIENT:** Only `email` is required. `phone_number` is optional. Account does not need to exist yet.
->
-> **STAFF / MAKEUP_ARTIST / ADMIN:** Account must already exist. The API verifies the email or phone matches a known account before sending the OTP. Blocked accounts are rejected here.
-
-**Body**
+> **CLIENT:** Email required, account need not exist yet.
+> **STAFF / MAKEUP_ARTIST / ADMIN:** Account must exist and not be blocked.
 
 ```json
 { "email": "user@gmail.com" }
 ```
 
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "OTP sent successfully",
-  "data": {}
-}
-```
-
 ---
 
-### 2️⃣ Verify OTP (Login)
+### Verify OTP (Login)
 
 `POST /auth/verify-otp/`
 
-> **CLIENT:** Account is auto-created and auto-approved on first login. `phone_number` required only on first login.
->
-> **STAFF / MAKEUP_ARTIST / ADMIN:** Returns `403` if account is still `PENDING`.
-
-**Body**
+> Returns `403` if account is `PENDING` or blocked.
 
 ```json
 { "email": "user@gmail.com", "otp": "123456" }
@@ -154,13 +152,13 @@ All protected APIs require:
   "success": true,
   "message": "Login successful",
   "data": {
-    "access_token": ".........",
-    "refresh_token": ".........",
+    "access_token": "...",
+    "refresh_token": "...",
     "user": {
-      "id": "ee7c55fc-4d49-4aff-b22a-a9df6937a178",
+      "id": "uuid",
       "email": "user@gmail.com",
       "phone_number": "9999999999",
-      "full_name": "",
+      "full_name": "Riya Sharma",
       "role": "CLIENT",
       "status": "ACTIVE",
       "is_approved": true,
@@ -170,67 +168,35 @@ All protected APIs require:
 }
 ```
 
-**Error — Pending Approval (403)**
-
-```json
-{
-  "success": false,
-  "message": "Your account is pending admin approval. You will be notified once approved.",
-  "data": {}
-}
-```
-
 ---
 
-### 3️⃣ Refresh Token
+### Refresh Token
 
 `POST /auth/refresh-token/`
 
-**Body**
-
 ```json
-{ "refresh_token": "your_refresh_token" }
-```
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Token refreshed successfully",
-  "data": { "access_token": "......" }
-}
+{ "refresh_token": "..." }
 ```
 
 ---
 
-### 4️⃣ Logout
+### Logout
 
 `POST /auth/logout/`
 
-**Body**
-
-```json
-{ "refresh_token": "your_refresh_token" }
-```
-
 Blacklists the refresh token.
 
-**Response**
-
 ```json
-{ "success": true, "message": "Logged out successfully", "data": {} }
+{ "refresh_token": "..." }
 ```
 
 ---
 
-### 5️⃣ Resend OTP
+### Resend OTP
 
 `POST /auth/resend-otp/`
 
-60-second cooldown · 5-minute expiry
-
-**Body**
+60-second cooldown, 5-minute OTP expiry.
 
 ```json
 { "email": "user@gmail.com" }
@@ -238,38 +204,19 @@ Blacklists the refresh token.
 
 ---
 
-### 6️⃣ Get Logged-in User
+### Get Logged-In User
 
 `GET /auth/me/`
 
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "User fetched",
-  "data": {
-    "id": "uuid",
-    "email": "user@gmail.com",
-    "phone_number": "9999999999",
-    "full_name": "",
-    "role": "CLIENT",
-    "status": "ACTIVE",
-    "is_approved": true,
-    "profile_completed": false
-  }
-}
-```
+Returns the authenticated user's core account fields.
 
 ---
 
-### 7️⃣ Register — Staff / Makeup Artist
+### Register — Staff / Makeup Artist (Admin-created)
 
 `POST /auth/register/staff-makeup/`
 
-Account is created with `status: PENDING`. Admin must approve before login is possible.
-
-**Body**
+Creates account with `status: PENDING`. Admin must approve.
 
 ```json
 {
@@ -281,30 +228,13 @@ Account is created with `status: PENDING`. Admin must approve before login is po
 
 > `role` must be `STAFF` or `MAKEUP_ARTIST`.
 
-**Response (201)**
-
-```json
-{
-  "success": true,
-  "message": "Registration successful. Your account is under review.",
-  "data": {
-    "id": "uuid",
-    "email": "jane@example.com",
-    "role": "STAFF",
-    "status": "PENDING"
-  }
-}
-```
-
 ---
 
-### 8️⃣ Register — Admin
+### Register — Admin
 
 `POST /auth/register/admin/`
 
-Account starts as `PENDING`. An existing approved admin must approve before login.
-
-**Body**
+Account starts as `PENDING`. Another approved admin must approve.
 
 ```json
 {
@@ -315,52 +245,119 @@ Account starts as `PENDING`. An existing approved admin must approve before logi
 }
 ```
 
-> All four fields required. Password min 8 characters, stored hashed.
+---
+
+### Approve User _(Admin only)_
+
+`POST /auth/admin/approve-user/`
+
+Sets `status → ACTIVE`, `is_approved → true`. Clients are auto-approved and cannot be approved here.
+
+```json
+{ "user_id": "uuid" }
+```
+
+---
+
+### List Pending Users _(Admin only)_
+
+`GET /auth/admin/pending-users/?role=STAFF`
+
+| Param  | Type   | Description                                      |
+| ------ | ------ | ------------------------------------------------ |
+| `role` | string | _(optional)_ `STAFF` · `MAKEUP_ARTIST` · `ADMIN` |
+
+---
+
+---
+
+## 👤 USER & PROFILE APIs (`/api/users/`)
+
+### Staff Public Self-Registration _(No auth — public)_
+
+`POST /users/register/staff/`
+
+**Content-Type:** `multipart/form-data`
+
+Called directly from the NUVÓ landing page `/joinourteam`. Creates a `User` (role=`STAFF`, status=`INACTIVE`) and a full `StaffProfile` from the submitted form. Auto-generates a unique stage name. Uploads up to 4 images to S3.
+
+| Field                   | Required | Description                                          |
+| ----------------------- | -------- | ---------------------------------------------------- |
+| `email`                 | ✅       | Applicant's email                                    |
+| `firstName`             | ✅       | First name                                           |
+| `lastName`              | ✅       | Last name                                            |
+| `telephone`             | ✅\*     | At least one phone required                          |
+| `cellPhone`             | ✅\*     | At least one phone required                          |
+| `address`               |          | Full address                                         |
+| `city`                  |          | City                                                 |
+| `country`               |          | Country                                              |
+| `placeOfBirth`          |          | Place of birth                                       |
+| `dob`                   |          | Date of birth `YYYY-MM-DD`                           |
+| `status`                |          | Marital status: `single` \| `married`                |
+| `weight`                |          | Weight in kg                                         |
+| `height`                |          | Height in cm                                         |
+| `shoeSize`              |          | Shoe size                                            |
+| `blazerSize`            |          | Blazer size (e.g. `M`, `L`)                          |
+| `trouserSize`           |          | Trouser size                                         |
+| `student`               |          | `yes` \| `no`                                        |
+| `school`                |          | School / university name                             |
+| `degree`                |          | Degree / qualification                               |
+| `language1`–`language4` |          | Language names (language1 required)                  |
+| `rate1`–`rate4`         |          | Proficiency per language if language is set          |
+| `hostessExperience`     |          | `yes` \| `no`                                        |
+| `groupResponsible`      |          | `yes` \| `no`                                        |
+| `agency`                |          | Agency name                                          |
+| `experienceAreas`       |          | Multiple values (e.g. `modeling`, `sales/marketing`) |
+| `workType`              |          | `full-time` \| `part-time` \| `both`                 |
+| `holidayWork`           |          | `yes` \| `no`                                        |
+| `images`                |          | Up to 4 image files (2 MB each max)                  |
 
 **Response (201)**
 
 ```json
 {
   "success": true,
-  "message": "Admin registration successful. Another admin must approve your account.",
+  "message": "Registration submitted successfully! Your application is under review.",
   "data": {
-    "id": "uuid",
-    "email": "admin@example.com",
-    "full_name": "Super Admin",
-    "role": "ADMIN",
-    "status": "PENDING"
+    "id": "profile_uuid",
+    "full_name": "Tom Cruise",
+    "email": "tom@example.com",
+    "stage_name": "Cobalt Raven",
+    "status": "PENDING_REVIEW"
   }
+}
+```
+
+> The `stage_name` is auto-generated (e.g. "Velvet Storm", "Cobalt Raven") and returned to display to the applicant. Admin will use this name to identify the person.
+
+**Error (409)** — duplicate email or phone:
+
+```json
+{ "success": false, "message": "An account with this email already exists" }
+```
+
+---
+
+### Complete Client Profile
+
+`POST /users/complete/client/`
+
+```json
+{
+  "full_name": "Riya Sharma",
+  "phone_number": "9999999999",
+  "city": "Bangalore",
+  "state": "Karnataka",
+  "country": "India",
+  "subscription_plan": "SILVER"
 }
 ```
 
 ---
 
-## 👤 PROFILE APIs
-
-### 9️⃣ Complete Client Profile
-
-`POST /users/complete/client/`
-
-**Body**
-
-```json
-    {
-        "full_name":         "Riya Sharma",  ← required
-        "phone_number":      "9999999999",   ← required
-        "city":              "Bangalore",    ← required
-        "state":             "Karnataka",    ← required
-        "country":           "India",        ← required
-        "subscription_plan": "SILVER"        ← optional, default SILVER
-    }
-```
-
----
-
-### 🔟 Complete Staff Profile
+### Complete Staff Profile
 
 `POST /users/complete/staff/`
-
-**Body**
 
 ```json
 {
@@ -377,11 +374,9 @@ Account starts as `PENDING`. An existing approved admin must approve before logi
 
 ---
 
-### 1️⃣1️⃣ Complete Makeup Artist Profile
+### Complete Makeup Artist Profile
 
 `POST /users/complete/makeup/`
-
-**Body**
 
 ```json
 {
@@ -397,7 +392,7 @@ Account starts as `PENDING`. An existing approved admin must approve before logi
 
 ---
 
-### 1️⃣2️⃣ Get My Profile (Role-Based)
+### Get My Profile
 
 `GET /users/my-profile/`
 
@@ -405,442 +400,312 @@ Returns profile fields based on the authenticated user's role.
 
 ---
 
-### 1️⃣3️⃣ Update My Profile
+### Update My Profile
 
 `PUT /users/update-profile/`
 
-Body fields depend on role (see Complete Profile bodies above).
+Body fields depend on role (same structure as Complete Profile).
 
 ---
 
-### 1️⃣4️⃣ Upload Staff Images (S3)
+### Upload Staff Images (Self)
 
 `POST /users/staff/upload-images/`
 
 **Content-Type:** `multipart/form-data`
 
-| Field             | Type   | Description                                          |
-| ----------------- | ------ | ---------------------------------------------------- |
-| `profile_picture` | file   | _(optional)_ Replaces existing profile picture in S3 |
-| `gallery_images`  | file[] | _(optional)_ Replaces entire gallery in S3           |
+| Field             | Type   | Description                          |
+| ----------------- | ------ | ------------------------------------ |
+| `profile_picture` | file   | _(optional)_ Replaces existing in S3 |
+| `gallery_images`  | file[] | _(optional)_ Replaces gallery in S3  |
 
-At least one field required. Old S3 files are deleted before uploading.
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Images uploaded successfully",
-  "data": {
-    "profile_picture": "https://s3.amazonaws.com/bucket/staff/profile_pictures/uuid.jpg",
-    "gallery_images": ["https://s3.amazonaws.com/bucket/staff/gallery/uuid.jpg"]
-  }
-}
-```
+At least one field required.
 
 ---
 
-## 👑 ADMIN APIs
+### List Staff _(Admin only)_
 
-### 1️⃣5️⃣ Approve User
-
-`POST /auth/admin/approve-user/`
-
-Approves a `PENDING` account. Sets `status → ACTIVE` and `is_approved → true`. Calling admin must themselves be approved. Clients cannot be approved here (they are auto-approved on first OTP login).
-
-**Body**
-
-```json
-{ "user_id": "uuid-of-pending-user" }
-```
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "User approved successfully",
-  "data": {
-    "id": "uuid",
-    "email": "jane@example.com",
-    "role": "STAFF",
-    "status": "ACTIVE",
-    "is_approved": true
-  }
-}
-```
-
----
-
-### 1️⃣6️⃣ List Pending Users
-
-`GET /auth/admin/pending-users/`
-
-**Query Parameters**
-
-| Param  | Type   | Description                                      |
-| ------ | ------ | ------------------------------------------------ |
-| `role` | string | _(optional)_ `STAFF` · `MAKEUP_ARTIST` · `ADMIN` |
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Pending users fetched",
-  "data": {
-    "total": 3,
-    "results": [
-      {
-        "id": "uuid",
-        "email": "jane@example.com",
-        "phone_number": "9999999999",
-        "full_name": "",
-        "role": "STAFF",
-        "status": "PENDING",
-        "created_at": "2024-06-01 10:00:00"
-      }
-    ]
-  }
-}
-```
-
----
-
-### 1️⃣7️⃣ List Staff
-
-`GET /users/admin/staff/`
-
-**Query Parameters**
+`GET /users/api/staff/`
 
 | Param        | Type   | Description                                           |
 | ------------ | ------ | ----------------------------------------------------- |
-| `search`     | string | Search by full name or stage name (case-insensitive)  |
-| `city`       | string | Filter by city (exact, case-insensitive)              |
+| `search`     | string | Full name or stage name (case-insensitive)            |
+| `city`       | string | Exact city match (case-insensitive)                   |
 | `package`    | string | `platinum` · `diamond` · `gold` · `silver` · `bronze` |
-| `status`     | string | `assigned` (on event) or `unassigned` (available)     |
+| `status`     | string | `assigned` · `unassigned`                             |
 | `start_date` | date   | Joined date from `YYYY-MM-DD`                         |
 | `end_date`   | date   | Joined date to `YYYY-MM-DD`                           |
-| `page`       | int    | Page number (default: `1`)                            |
-| `page_size`  | int    | Results per page (default: `15`, max: `100`)          |
+| `page`       | int    | Default: `1`                                          |
+| `page_size`  | int    | Default: `15`, max: `100`                             |
 
-**Response**
+---
+
+### Get Staff Detail _(Admin only)_
+
+`GET /users/api/staff/<staff_id>/`
+
+Returns full profile including all registration fields, gallery images, and current user status.
+
+---
+
+### Create Staff _(Admin only)_
+
+`POST /users/admin/staff/create/`
+
+**Content-Type:** `multipart/form-data`
+
+Creates a `User` + `StaffProfile` directly. Auto-generates stage name. Supports all profile fields + image uploads.
+
+---
+
+### Update Staff _(Admin only)_
+
+`PUT /users/admin/staff/<staff_id>/update/`
+
+**Content-Type:** `multipart/form-data`
+
+All fields optional. Updates both `User` and `StaffProfile`.
+
+---
+
+### Delete Staff _(Admin only)_
+
+`DELETE /users/admin/staff/<staff_id>/delete/`
+
+Deletes the `StaffProfile`, `User`, and all S3 assets.
+
+---
+
+### Upload Staff Images _(Admin only)_
+
+`POST /users/admin/staff/<staff_id>/upload-images/`
+
+**Content-Type:** `multipart/form-data`
+
+| Field             | Type   | Description                                 |
+| ----------------- | ------ | ------------------------------------------- |
+| `profile_picture` | file   | _(optional)_ Replaces profile picture in S3 |
+| `gallery_images`  | file[] | _(optional)_ Appends to gallery in S3       |
+
+---
+
+### Delete Staff Gallery Image _(Admin only)_
+
+`DELETE /users/admin/staff/<staff_id>/delete-gallery/`
 
 ```json
-{
-  "success": true,
-  "message": "Staff list fetched",
-  "data": {
-    "results": [
-      {
-        "id": "uuid",
-        "user_id": "uuid",
-        "full_name": "Rahul",
-        "stage_name": "Rocky",
-        "gender": "Male",
-        "city": "Chennai",
-        "state": "Tamil Nadu",
-        "country": "India",
-        "package": "gold",
-        "status": "active",
-        "price_of_staff": 5000,
-        "experience_in_years": 3,
-        "profile_picture": "https://s3.amazonaws.com/...",
-        "joined_date": "2024-01-15"
-      }
-    ],
-    "pagination": { "total": 120, "page": 1, "page_size": 15, "total_pages": 8 }
-  }
-}
+{ "image_url": "https://s3.amazonaws.com/.../image.jpg" }
 ```
 
 ---
 
-### 1️⃣8️⃣ List Makeup Artists
+### List Clients _(Admin only)_
 
-`GET /users/admin/makeup-artists/`
-
-**Query Parameters**
-
-| Param        | Type   | Description                                  |
-| ------------ | ------ | -------------------------------------------- |
-| `search`     | string | Search by full name (case-insensitive)       |
-| `city`       | string | Filter by city (exact, case-insensitive)     |
-| `experience` | int    | Minimum years of experience                  |
-| `status`     | string | `active` · `inactive` · `blocked`            |
-| `page`       | int    | Page number (default: `1`)                   |
-| `page_size`  | int    | Results per page (default: `15`, max: `100`) |
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Makeup artists list fetched",
-  "data": {
-    "results": [
-      {
-        "id": "uuid",
-        "user_id": "uuid",
-        "full_name": "Anita",
-        "gender": "Female",
-        "makeup_speciality": "Bridal",
-        "city": "Mumbai",
-        "state": "Maharashtra",
-        "country": "India",
-        "experience_in_years": 5,
-        "status": "active",
-        "profile_picture": "https://s3.amazonaws.com/...",
-        "joined_date": "2024-03-10"
-      }
-    ],
-    "pagination": { "total": 45, "page": 1, "page_size": 15, "total_pages": 3 }
-  }
-}
-```
-
----
-
-### 1️⃣9️⃣ List Clients
-
-`GET /users/admin/clients/`
-
-**Query Parameters**
+`GET /users/api/clients/`
 
 | Param        | Type   | Description                                           |
 | ------------ | ------ | ----------------------------------------------------- |
-| `search`     | string | Search by full name **or** email (case-insensitive)   |
-| `city`       | string | Filter by city (exact, case-insensitive)              |
+| `search`     | string | Full name or email (case-insensitive)                 |
+| `city`       | string | Exact city match                                      |
 | `plan_type`  | string | `SILVER` · `BRONZE` · `GOLD` · `PLATINUM` · `DIAMOND` |
 | `status`     | string | `active` · `inactive` · `blocked`                     |
 | `start_date` | date   | Joined date from `YYYY-MM-DD`                         |
 | `end_date`   | date   | Joined date to `YYYY-MM-DD`                           |
-| `page`       | int    | Page number (default: `1`)                            |
-| `page_size`  | int    | Results per page (default: `15`, max: `100`)          |
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Clients list fetched",
-  "data": {
-    "results": [
-      {
-        "id": "uuid",
-        "user_id": "uuid",
-        "full_name": "Rakesh AC",
-        "email": "rakesh@gmail.com",
-        "city": "Bangalore",
-        "state": "Karnataka",
-        "country": "India",
-        "subscription_plan": "SILVER",
-        "status": "active",
-        "joined_date": "2024-06-01"
-      }
-    ],
-    "pagination": {
-      "total": 200,
-      "page": 1,
-      "page_size": 15,
-      "total_pages": 14
-    }
-  }
-}
-```
+| `page`       | int    | Default: `1`                                          |
+| `page_size`  | int    | Default: `15`, max: `100`                             |
 
 ---
 
-### 2️⃣0️⃣ List All Users (Raw)
+### Get Client Detail _(Admin only)_
 
-`GET /users/admin/all-users/`
-
-Returns basic user records without profile data.
+`GET /users/api/clients/<client_id>/`
 
 ---
 
-### 2️⃣1️⃣ Change User Status
+### Create Client _(Admin only)_
 
-`PUT /users/admin/change-status/`
-
-**Body**
-
-```json
-{ "user_id": "uuid", "status": "BLOCKED" }
-```
-
-**Status options:** `ACTIVE` · `INACTIVE` · `BLOCKED` · `PENDING`
+`POST /users/admin/create-client/`
 
 ---
 
-### 2️⃣2️⃣ Update Client Subscription
+### Delete Client _(Admin only)_
+
+`DELETE /users/admin/clients/<client_id>/delete/`
+
+---
+
+### Update Client Subscription _(Admin only)_
 
 `PUT /users/admin/update-subscription/`
-
-**Body**
 
 ```json
 { "user_id": "uuid", "subscription_plan": "GOLD" }
 ```
 
-**Plans:** `SILVER` · `BRONZE` · `GOLD` · `PLATINUM` · `DIAMOND`
+Plans: `SILVER` · `BRONZE` · `GOLD` · `PLATINUM` · `DIAMOND`
 
 ---
 
-## 🗂️ Master Data APIs
+### List Makeup Artists _(Admin only)_
 
-> All master APIs require `Authorization: Bearer <ACCESS_TOKEN>` and role = `ADMIN`
+`GET /users/api/makeup-artists/`
 
----
-
-
-
-
-### 🎨 EVENT THEMES
-
-#### Create Event Theme
-
-`POST /master/themes/create/`
-
-**Content-Type:** `multipart/form-data`
-
-| Field            | Type   | Description             |
-| ---------------- | ------ | ----------------------- |
-| `theme_name`     | string | Name of the theme       |
-| `description`    | string | Theme description       |
-| `cover_image`    | file   | Cover image file        |
-| `gallery_images` | file[] | Multiple gallery images |
+| Param        | Type   | Description                       |
+| ------------ | ------ | --------------------------------- |
+| `search`     | string | Full name (case-insensitive)      |
+| `city`       | string | Exact city match                  |
+| `experience` | int    | Minimum years of experience       |
+| `status`     | string | `active` · `inactive` · `blocked` |
+| `page`       | int    | Default: `1`                      |
+| `page_size`  | int    | Default: `15`, max: `100`         |
 
 ---
 
-#### List Event Themes
+### Get / Create / Update / Delete MUA _(Admin only)_
 
-`GET /master/themes/`
+| Method   | Endpoint                                               | Description            |
+| -------- | ------------------------------------------------------ | ---------------------- |
+| `GET`    | `/users/api/makeup-artists/<mua_id>/`                  | Full profile detail    |
+| `POST`   | `/users/admin/makeup-artists/create/`                  | Create MUA + profile   |
+| `PUT`    | `/users/admin/makeup-artists/<mua_id>/update/`         | Update profile         |
+| `DELETE` | `/users/admin/makeup-artists/<mua_id>/delete/`         | Delete + S3 cleanup    |
+| `POST`   | `/users/admin/makeup-artists/<mua_id>/upload-images/`  | Upload profile/gallery |
+| `DELETE` | `/users/admin/makeup-artists/<mua_id>/delete-gallery/` | Remove gallery image   |
 
-**Response**
+---
+
+---
+
+## 🗂️ MASTER DATA APIs (`/api/master/`)
+
+> All write endpoints require `ADMIN` role. Read endpoints require auth unless noted.
+
+---
+
+### 🎨 Event Themes
+
+| Method   | Endpoint                            | Description              |
+| -------- | ----------------------------------- | ------------------------ |
+| `POST`   | `/master/themes/create/`            | Create theme (multipart) |
+| `GET`    | `/master/themes/`                   | List all themes          |
+| `PUT`    | `/master/themes/<theme_id>/update/` | Update theme (multipart) |
+| `DELETE` | `/master/themes/<theme_id>/delete/` | Delete theme + S3 assets |
+
+**Create / Update fields** (`multipart/form-data`):
+
+| Field                 | Type   | Description                                                  |
+| --------------------- | ------ | ------------------------------------------------------------ |
+| `theme_name`          | string | Required on create                                           |
+| `description`         | string |                                                              |
+| `status`              | string | `ACTIVE` \| `INACTIVE`                                       |
+| `cover_image`         | file   | Replaces existing cover in S3                                |
+| `gallery_images`      | file[] | New images to add to gallery                                 |
+| `delete_gallery_urls` | string | _(Update only)_ JSON array of S3 URLs to delete from gallery |
+
+---
+
+### 👔 Uniform Categories
+
+| Method   | Endpoint                                | Description                      |
+| -------- | --------------------------------------- | -------------------------------- |
+| `POST`   | `/master/uniform/create/`               | Create category (multipart)      |
+| `GET`    | `/master/uniform/`                      | List all categories (admin)      |
+| `GET`    | `/master/uniform/filter/`               | Public filter (no auth required) |
+| `PUT`    | `/master/uniform/<category_id>/update/` | Update category (multipart)      |
+| `DELETE` | `/master/uniform/<category_id>/delete/` | Delete category + S3 assets      |
+
+**Create / Update fields** (`multipart/form-data`):
+
+| Field               | Type   | Description                                                    |
+| ------------------- | ------ | -------------------------------------------------------------- |
+| `category_name`     | string | Required on create                                             |
+| `unique_key`        | string | Required on create, read-only after (e.g. `royal_traditional`) |
+| `description`       | string |                                                                |
+| `gender`            | string | `Male` \| `Female` \| `Unisex`                                 |
+| `price`             | number | Price per unit in ₹                                            |
+| `is_active`         | string | `"true"` \| `"false"`                                          |
+| `images`            | file[] | New images to upload                                           |
+| `delete_image_urls` | string | _(Update only)_ JSON array of S3 URLs to remove                |
+
+**Public filter** `GET /master/uniform/filter/` — no auth required, used by landing page:
+
+| Param                     | Type   | Description                               |
+| ------------------------- | ------ | ----------------------------------------- |
+| `gender`                  | string | `Male` \| `Female` \| `Unisex`            |
+| `min_price` / `max_price` | number | Price range filter                        |
+| `search`                  | string | Category name contains (case-insensitive) |
+
+---
+
+### 📦 Inventory _(Admin only)_
+
+Inventory is built on top of `UniformCategory` — each uniform category has a `stock` dict tracking quantity by size.
+
+| Method | Endpoint                                  | Description                         |
+| ------ | ----------------------------------------- | ----------------------------------- |
+| `GET`  | `/master/inventory/summary/`              | Dashboard summary stats             |
+| `GET`  | `/master/inventory/`                      | List all with stock data            |
+| `GET`  | `/master/inventory/<category_id>/`        | Single item with full stock detail  |
+| `PUT`  | `/master/inventory/<category_id>/stock/`  | Set stock quantities per size       |
+| `POST` | `/master/inventory/<category_id>/adjust/` | Increment/decrement in-use (events) |
+
+**Inventory summary response:**
 
 ```json
 {
-  "success": true,
-  "message": "Themes fetched",
-  "data": [
-    {
-      "id": "uuid",
-      "theme_name": "Royal Wedding",
-      "status": "ACTIVE",
-      "description": "Classic royal wedding setup",
-      "cover_image": "https://s3.amazonaws.com/bucket/event_themes/cover.jpg",
-      "gallery_images": [
-        "https://s3.amazonaws.com/bucket/event_themes/gallery/img1.jpg"
-      ]
-    }
-  ]
+  "total_categories": 12,
+  "total_items": 450,
+  "total_in_use": 280,
+  "total_available": 170,
+  "low_stock_count": 3
 }
 ```
 
----
+**List inventory query params:**
 
-#### Update Event Theme
+| Param       | Type   | Description                              |
+| ----------- | ------ | ---------------------------------------- |
+| `search`    | string | Category name contains                   |
+| `category`  | string | Exact `unique_key` match                 |
+| `is_active` | string | `true` \| `false`                        |
+| `low_stock` | string | `true` → only items with < 20% available |
 
-`PUT /master/themes/<theme_id>/update/`
-
-**Content-Type:** `multipart/form-data`
-
-| Field              | Type     | Description                                                       |
-| ------------------ | -------- | ----------------------------------------------------------------- |
-| `theme_name`       | string   | _(optional)_ Updated name                                         |
-| `description`      | string   | _(optional)_ Updated description                                  |
-| `status`           | string   | _(optional)_ `ACTIVE` / `INACTIVE`                                |
-| `cover_image`      | file     | _(optional)_ New cover image — replaces old one in S3             |
-| `gallery_images`   | file[]   | _(optional)_ New gallery images to add                            |
-| `existing_gallery` | string[] | URLs of gallery images to keep — omitted URLs are deleted from S3 |
-
----
-
-#### Delete Event Theme
-
-`DELETE /master/themes/<theme_id>/delete/`
-
-Deletes the theme and removes all S3 assets.
-
----
-
-### 👔 UNIFORM CATEGORIES
-
-#### Create Uniform Category
-
-`POST /master/uniform/create/`
-
-**Content-Type:** `multipart/form-data`
-
-| Field           | Type   | Description                            |
-| --------------- | ------ | -------------------------------------- |
-| `category_name` | string | Name of the uniform category           |
-| `unique_key`    | string | Unique slug (e.g. `royal_traditional`) |
-| `description`   | string | Category description                   |
-| `images`        | file[] | One or more uniform image files        |
-
----
-
-#### List Uniform Categories
-
-`GET /master/uniform/`
-
-**Response**
+**Update stock body:**
 
 ```json
 {
-  "success": true,
-  "message": "Uniform categories fetched",
-  "data": [
-    {
-      "id": "uuid",
-      "category_name": "Royal Traditional",
-      "unique_key": "royal_traditional",
-      "description": "Traditional royal uniforms",
-      "images": ["https://s3.amazonaws.com/bucket/uniform_categories/u1.jpg"],
-      "is_active": true
-    }
-  ]
+  "has_sizes": true,
+  "stock": {
+    "S": { "total": 20 },
+    "M": { "total": 40, "in_use": 12 },
+    "L": { "total": 30 },
+    "XL": { "total": 10 }
+  }
 }
 ```
 
----
+> `in_use` is optional — omit to keep existing value. `total` cannot be less than `in_use`.
 
-#### Update Uniform Category
+For free-size items (`has_sizes: false`), use key `"OS"` (One Size).
 
-`PUT /master/uniform/<category_id>/update/`
+**Adjust in-use body** (called by events system):
 
-**Content-Type:** `multipart/form-data`
+```json
+{ "size": "M", "delta": 3 }
+```
 
-| Field             | Type     | Description                                               |
-| ----------------- | -------- | --------------------------------------------------------- |
-| `category_name`   | string   | _(optional)_ Updated name                                 |
-| `description`     | string   | _(optional)_ Updated description                          |
-| `is_active`       | string   | _(optional)_ `"true"` or `"false"`                        |
-| `images`          | file[]   | _(optional)_ New images to upload                         |
-| `existing_images` | string[] | URLs of images to keep — omitted URLs are deleted from S3 |
+> Positive delta = assign. Negative = return. Returns `400` if stock would go negative.
 
 ---
 
-#### Delete Uniform Category
+### 💳 Subscription Plans
 
-`DELETE /master/uniform/<category_id>/delete/`
+| Method | Endpoint                                   | Description            |
+| ------ | ------------------------------------------ | ---------------------- |
+| `GET`  | `/master/subscription/`                    | List all plan settings |
+| `PUT`  | `/master/subscription/<plan_name>/update/` | Upsert plan pricing    |
 
-Deletes the category and removes all S3 assets.
-
----
-
-### 💳 SUBSCRIPTION PLAN SETTINGS
-
-Plan names are fixed: `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
-
-#### Update Subscription Plan
-
-`PUT /master/subscription/<plan_name>/update/`
-
-**Body**
+Plan names (fixed): `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
 
 ```json
 {
@@ -853,37 +718,35 @@ Plan names are fixed: `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
 
 ---
 
-### 💰 PAYMENT TERMS
+### 💰 Payment Terms
 
-#### Update Payment Terms
-
-`PUT /master/payment/update/`
-
-**Body**
+| Method | Endpoint                  | Description                       |
+| ------ | ------------------------- | --------------------------------- |
+| `GET`  | `/master/payment/`        | Get current advance percentage    |
+| `PUT`  | `/master/payment/update/` | Update advance percentage (0–100) |
 
 ```json
 { "advancePercentage": 30 }
 ```
 
----
-
-
-
-## 📅 EVENTS APIs
-
-> Event status choices: `created` · `planning_started` · `staff_allocated` · `completed` · `cancelled`
->
-> Payment status choices: `unpaid` · `advance` · `paid_fully` · `refund_pending`
+> This value is read by the admin panel when initiating event payments to auto-calculate the advance amount.
 
 ---
 
-### 2️⃣3️⃣ Create Event
+---
+
+## 📅 EVENTS APIs (`/api/events/`)
+
+> Event status: `created` · `planning_started` · `staff_allocated` · `completed` · `cancelled`
+> Payment status: `unpaid` · `advance` · `paid_fully` · `refund_pending`
+
+---
+
+### Create Event _(Admin only)_
 
 `POST /events/create/`
 
-**Role:** `ADMIN`
-
-**Body**
+Required: `event_name`, `city`, `state`, `client_id`, `venue.venue_name`, `event_start_datetime`, `event_end_datetime`
 
 ```json
 {
@@ -896,8 +759,8 @@ Plan names are fixed: `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
     "formatted_address": "MG Road, Bangalore, Karnataka 560001",
     "latitude": 12.9716,
     "longitude": 77.5946,
-    "place_id": "ChIJx9Lr6t4WrjsR0p0Gg1bH9lU",
-    "google_maps_url": "https://www.google.com/maps/place/?q=place_id:ChIJx9Lr6t4WrjsR0p0Gg1bH9lU"
+    "place_id": "ChIJ...",
+    "google_maps_url": "https://www.google.com/maps/place/?q=place_id:ChIJ..."
   },
   "event_start_datetime": "2026-04-10T18:00:00",
   "event_end_datetime": "2026-04-10T23:00:00",
@@ -908,7 +771,6 @@ Plan names are fixed: `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
   "theme_id": "uuid",
   "uniform_id": "uuid",
   "package_id": "uuid",
-  "crew_member_ids": ["profile_id_1", "profile_id_2"],
   "gst_details": {
     "company_name": "Sharma Enterprises",
     "address": "123 MG Road, Bangalore",
@@ -922,260 +784,44 @@ Plan names are fixed: `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
 }
 ```
 
-> `event_name`, `city`, `state`, `client_id`, `venue.venue_name`, `event_start_datetime`, `event_end_datetime` are required. All other fields are optional. `gst_details` is only needed for corporate events.
-
-**Response (201)**
-
-```json
-{
-  "success": true,
-  "message": "Event created successfully",
-  "data": { "...full event object (see Get Event response)..." }
-}
-```
-
 ---
 
-### 2️⃣4️⃣ List Events
+### List Events _(Admin only)_
 
 `GET /events/`
 
-**Role:** `ADMIN`
-
-**Query Parameters**
-
-| Param        | Type   | Description                                                                    |
-| ------------ | ------ | ------------------------------------------------------------------------------ |
-| `search`     | string | Search by event name **or** client full name (case-insensitive)                |
-| `city`       | string | Filter by city (exact, case-insensitive)                                       |
-| `status`     | string | `created` · `planning_started` · `staff_allocated` · `completed` · `cancelled` |
-| `client_id`  | string | Filter by ClientProfile ID                                                     |
-| `start_date` | date   | `event_start_datetime` >= `YYYY-MM-DD`                                         |
-| `end_date`   | date   | `event_start_datetime` <= `YYYY-MM-DD`                                         |
-| `page`       | int    | Page number (default: `1`)                                                     |
-| `page_size`  | int    | Results per page (default: `15`, max: `100`)                                   |
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Events fetched",
-  "data": {
-    "results": [
-      {
-        "id": "uuid",
-        "event_name": "Sharma Wedding",
-        "event_type": "Wedding",
-        "city": "Bangalore",
-        "state": "Karnataka",
-        "venue": {
-          "venue_name": "Royal Orchid Palace",
-          "formatted_address": "MG Road, Bangalore",
-          "latitude": 12.9716,
-          "longitude": 77.5946,
-          "place_id": "ChIJ...",
-          "google_maps_url": "https://www.google.com/maps/..."
-        },
-        "event_start_datetime": "2026-04-10 18:00:00",
-        "event_end_datetime": "2026-04-10 23:00:00",
-        "no_of_days": 1,
-        "working_hours": 5.0,
-        "crew_count": 5,
-        "client": {
-          "profile_id": "uuid",
-          "full_name": "Riya Sharma",
-          "city": "Bangalore"
-        },
-        "payment": {
-          "total_amount": 125000,
-          "gst_amount": 22500,
-          "tax_amount": 0,
-          "paid_amount": 25000,
-          "balance_due": 100000,
-          "payment_status": "advance",
-          "phonepay_transaction_id": "",
-          "phonepay_order_id": "",
-          "last_updated": "2026-01-15 12:00:00"
-        },
-        "status": "staff_allocated",
-        "cancelled_reason": null,
-        "theme_id": "uuid",
-        "uniform_id": "uuid",
-        "package_id": "uuid",
-        "created_at": "2026-01-10 10:00:00",
-        "updated_at": "2026-01-15 12:00:00"
-      }
-    ],
-    "pagination": {
-      "total": 50,
-      "page": 1,
-      "page_size": 15,
-      "total_pages": 4
-    }
-  }
-}
-```
+| Param        | Type   | Description                    |
+| ------------ | ------ | ------------------------------ |
+| `search`     | string | Event name or client full name |
+| `city`       | string | Exact city (case-insensitive)  |
+| `status`     | string | Any event status value         |
+| `client_id`  | string | ClientProfile ID               |
+| `start_date` | date   | Event start >= `YYYY-MM-DD`    |
+| `end_date`   | date   | Event start <= `YYYY-MM-DD`    |
+| `page`       | int    | Default: `1`                   |
+| `page_size`  | int    | Default: `15`, max: `100`      |
 
 ---
 
-### 2️⃣5️⃣ Get Event Details
+### Get Event Details
 
 `GET /events/<event_id>/`
 
-**Role:** Any authenticated user
-
-Returns a fully enriched event object. Theme, uniform, and package are expanded to full objects. Client includes email and phone. Crew members include profile pictures.
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Event fetched",
-  "data": {
-    "id": "uuid",
-    "event_name": "Sharma Wedding",
-    "event_type": "Wedding",
-    "city": "Bangalore",
-    "state": "Karnataka",
-    "venue": {
-      "venue_name": "Royal Orchid Palace",
-      "formatted_address": "MG Road, Bangalore",
-      "latitude": 12.9716,
-      "longitude": 77.5946,
-      "place_id": "ChIJ...",
-      "google_maps_url": "https://www.google.com/maps/..."
-    },
-    "event_start_datetime": "2026-04-10 18:00:00",
-    "event_end_datetime": "2026-04-10 23:00:00",
-    "no_of_days": 1,
-    "working_hours": 5.0,
-    "crew_count": 5,
-    "client": {
-      "profile_id": "uuid",
-      "full_name": "Riya Sharma",
-      "city": "Bangalore",
-      "email": "riya@example.com",
-      "phone_number": "9999999999",
-      "user_id": "uuid"
-    },
-    "theme": {
-      "id": "uuid",
-      "theme_name": "Royal Wedding",
-      "cover_image": "https://s3.amazonaws.com/...",
-      "status": "ACTIVE"
-    },
-    "uniform": {
-      "id": "uuid",
-      "category_name": "Royal Traditional",
-      "unique_key": "royal_traditional",
-      "images": ["https://s3.amazonaws.com/..."]
-    },
-    "package": {
-      "id": "uuid",
-      "name": "Gold",
-      "monthly_price": 4999,
-      "yearly_price": 49999,
-      "priority_support": true,
-      "is_free": false
-    },
-    "crew_members": [
-      {
-        "profile_id": "uuid",
-        "full_name": "Rahul",
-        "stage_name": "Rocky",
-        "gender": "Male",
-        "city": "Chennai",
-        "profile_picture": "https://s3.amazonaws.com/...",
-        "package": "gold"
-      }
-    ],
-    "gst_details": {
-      "company_name": "Sharma Enterprises",
-      "address": "123 MG Road, Bangalore",
-      "gst_number": "29ABCDE1234F1Z5"
-    },
-    "payment": {
-      "total_amount": 125000,
-      "gst_amount": 22500,
-      "tax_amount": 0,
-      "paid_amount": 25000,
-      "balance_due": 100000,
-      "payment_status": "advance",
-      "phonepay_transaction_id": "",
-      "phonepay_order_id": "TXN-ABCD1234-XY789Z",
-      "last_updated": "2026-01-15 12:00:00"
-    },
-    "status": "staff_allocated",
-    "cancelled_reason": null,
-    "created_at": "2026-01-10 10:00:00",
-    "updated_at": "2026-01-15 12:00:00"
-  }
-}
-```
+Returns fully enriched event: expanded theme, uniform, package, client (with email/phone), crew members with profile pictures.
 
 ---
 
-### 2️⃣6️⃣ Update Event
+### Update Event _(Admin only)_
 
 `PUT /events/<event_id>/update/`
 
-**Role:** `ADMIN`
-
-All fields are optional. Only supplied fields are updated. To update crew members, pass `crew_member_ids` (replaces the full list).
-
-**Body**
-
-```json
-{
-  "event_name": "Sharma Grand Wedding",
-  "event_type": "Wedding",
-  "city": "Bangalore",
-  "state": "Karnataka",
-  "venue": {
-    "venue_name": "The Leela Palace",
-    "formatted_address": "Old Airport Road, Bangalore",
-    "latitude": 12.9607,
-    "longitude": 77.6483,
-    "place_id": "ChIJ...",
-    "google_maps_url": "https://www.google.com/maps/..."
-  },
-  "event_start_datetime": "2026-04-10T18:00:00",
-  "event_end_datetime": "2026-04-11T01:00:00",
-  "no_of_days": 1,
-  "working_hours": 7,
-  "crew_count": 6,
-  "theme_id": "uuid",
-  "uniform_id": "uuid",
-  "package_id": "uuid",
-  "crew_member_ids": ["profile_id_1", "profile_id_2"],
-  "gst_details": {
-    "company_name": "Sharma Enterprises",
-    "address": "123 MG Road, Bangalore",
-    "gst_number": "29ABCDE1234F1Z5"
-  },
-  "payment": {
-    "total_amount": 150000,
-    "gst_amount": 27000,
-    "tax_amount": 0,
-    "paid_amount": 50000,
-    "payment_status": "advance"
-  }
-}
-```
-
-**Response** — same shape as Get Event Details.
+All fields optional. Same body shape as Create Event. Pass `crew_member_ids` to replace the full crew list.
 
 ---
 
-### 2️⃣7️⃣ Update Event Status
+### Update Event Status _(Admin only)_
 
 `PUT /events/<event_id>/status/`
-
-**Role:** `ADMIN`
-
-**Body**
 
 ```json
 {
@@ -1186,112 +832,48 @@ All fields are optional. Only supplied fields are updated. To update crew member
 
 > `cancelled_reason` is required when `status` is `cancelled`.
 
-**Response**
+---
 
-```json
-{
-  "success": true,
-  "message": "Event status updated to 'planning_started'",
-  "data": { "id": "uuid", "status": "planning_started" }
-}
-```
+### Delete Event _(Admin only)_
+
+`DELETE /events/<event_id>/delete/`
 
 ---
 
-### 2️⃣8️⃣ Available Staff for Event
+### Available Staff for Event _(Admin only)_
 
 `GET /events/<event_id>/available-staff/`
 
-**Role:** `ADMIN`
+Returns staff with no scheduling conflicts during the event's time window. Staff already on this event are included with `"already_assigned": true`.
 
-Returns staff who are **not** already assigned to another overlapping event in the same time window. Staff already on this event are included with `already_assigned: true` so the UI can pre-check them.
+**Conflict rule:** `other.start < this.end AND other.end > this.start`. Cancelled events excluded.
 
-Overlap rule: `other.start < this.end AND other.end > this.start`. Cancelled events are excluded from the conflict check.
-
-**Query Parameters**
-
-| Param       | Type   | Description                                           |
-| ----------- | ------ | ----------------------------------------------------- |
-| `search`    | string | Search by full name or stage name (case-insensitive)  |
-| `city`      | string | Filter by city (exact, case-insensitive)              |
-| `package`   | string | `platinum` · `diamond` · `gold` · `silver` · `bronze` |
-| `page`      | int    | Page number (default: `1`)                            |
-| `page_size` | int    | Results per page (default: `20`, max: `100`)          |
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Available staff fetched",
-  "data": {
-    "event_window": {
-      "start": "2026-04-10 18:00:00",
-      "end": "2026-04-10 23:00:00"
-    },
-    "results": [
-      {
-        "profile_id": "uuid",
-        "full_name": "Rahul",
-        "stage_name": "Rocky",
-        "gender": "Male",
-        "city": "Chennai",
-        "package": "gold",
-        "profile_picture": "https://s3.amazonaws.com/...",
-        "experience_in_years": 3,
-        "price_of_staff": 5000,
-        "already_assigned": true
-      }
-    ],
-    "busy_count": 12,
-    "pagination": {
-      "total": 35,
-      "page": 1,
-      "page_size": 20,
-      "total_pages": 2
-    }
-  }
-}
-```
+| Param       | Type   | Description               |
+| ----------- | ------ | ------------------------- |
+| `search`    | string | Full name or stage name   |
+| `city`      | string | Exact city                |
+| `package`   | string | Package tier filter       |
+| `page`      | int    | Default: `1`              |
+| `page_size` | int    | Default: `20`, max: `100` |
 
 ---
 
-### 2️⃣9️⃣ Assign Crew to Event
+### Assign Crew _(Admin only)_
 
 `PUT /events/<event_id>/assign-crew/`
 
-**Role:** `ADMIN`
-
-Replaces the entire crew list. Before saving, validates that none of the submitted staff are already assigned to a conflicting event in the same time slot. Returns `409` with conflict details if any clash is found.
-
-**Body**
+Replaces the full crew list. Validates no scheduling conflicts before saving. Returns `409` on conflict.
 
 ```json
-{
-  "crew_member_ids": ["profile_id_1", "profile_id_2", "profile_id_3"]
-}
+{ "crew_member_ids": ["profile_id_1", "profile_id_2"] }
 ```
 
-**Response (200)**
-
-```json
-{
-  "success": true,
-  "message": "Crew assigned successfully",
-  "data": {
-    "crew_count": 3,
-    "status": "staff_allocated",
-    "crew_members": ["profile_id_1", "profile_id_2", "profile_id_3"]
-  }
-}
-```
-
-**Error — Scheduling Conflict (409)**
+**Conflict response (409):**
 
 ```json
 {
   "success": false,
-  "message": "Scheduling conflict: Rahul (busy on 'Tech Corp Annual Meet'), Anita (busy on 'Mumbai Fashion Show') are already assigned to another event during this time slot.",
+  "message": "Scheduling conflict: Rahul (busy on 'Tech Corp Annual Meet') ...",
   "data": {
     "conflicts": {
       "profile_id_1": {
@@ -1307,67 +889,33 @@ Replaces the entire crew list. Before saving, validates that none of the submitt
 
 ---
 
-### 3️⃣0️⃣ Delete Event
-
-`DELETE /events/<event_id>/delete/`
-
-**Role:** `ADMIN`
-
-**Response**
-
-```json
-{ "success": true, "message": "Event deleted successfully", "data": {} }
-```
-
----
-
-### 3️⃣1️⃣ My Events (Client — Mobile App)
+### My Events _(Client / Mobile App)_
 
 `GET /events/my-events/`
 
-**Role:** `CLIENT`
+Returns all events for the logged-in client, ordered by most recent.
 
-Returns all events belonging to the logged-in client, ordered by most recent.
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Events fetched",
-  "data": {
-    "results": ["...compact event objects..."],
-    "total": 4
-  }
-}
-```
+---
 
 ---
 
 ## 💳 PAYMENT APIs
 
-### 3️⃣2️⃣ Initiate Payment
+### Initiate Payment
 
 `POST /events/<event_id>/payment/initiate/`
-
-**Role:** Any authenticated user
-
-Triggers PhonePe payment initiation. Stores the `merchant_txn_id` on the event for callback lookup.
-
-**Body**
 
 ```json
 { "amount": 25000 }
 ```
 
-> `amount` is in ₹ (Indian Rupees). Must be greater than 0. Returns `400` if event is already `paid_fully`.
+> Amount in ₹. Returns `400` if event is already `paid_fully`.
 
-**Response**
+**Response:**
 
 ```json
 {
   "success": true,
-  "message": "STUB: Payment initiation ready. Wire up real API call to go live.",
   "data": {
     "payment_url": "https://mercury-uat.phonepe.com/transact/simulator?token=...",
     "merchant_txn_id": "TXN-ABCD1234-XY789Z"
@@ -1375,82 +923,50 @@ Triggers PhonePe payment initiation. Stores the `merchant_txn_id` on the event f
 }
 ```
 
-> Redirect the user to `payment_url` to complete payment on PhonePe's hosted page.
+Redirect the user to `payment_url` to complete payment on PhonePe's hosted page.
 
 ---
 
-### 3️⃣3️⃣ Payment Callback
+### Payment Callback _(Public — PhonePe redirect)_
 
 `GET /events/payment/callback/?txn=<merchant_txn_id>`
 
-**Role:** Public (called by PhonePe redirect after user completes payment)
-
-Verifies payment status with PhonePe and updates `paid_amount` and `payment_status` on the event.
-
-**Query Parameters**
-
-| Param | Type   | Description                          |
-| ----- | ------ | ------------------------------------ |
-| `txn` | string | `merchant_txn_id` from initiate step |
-
-**Response**
-
-```json
-{
-  "success": true,
-  "message": "Payment status updated",
-  "data": {
-    "phonepay_status": "PAYMENT_SUCCESS",
-    "event_id": "uuid",
-    "payment_status": "paid_fully",
-    "paid_amount": 125000
-  }
-}
-```
+Verifies payment with PhonePe and updates `paid_amount` + `payment_status` on the event.
 
 ---
 
-### 3️⃣4️⃣ Payment Webhook
+### Payment Webhook _(Public — PhonePe server-to-server)_
 
 `POST /events/payment/webhook/`
 
-**Role:** Public (server-to-server call from PhonePe)
+Handles server-to-server notification from PhonePe. Always returns `200` to acknowledge.
 
-Handles PhonePe's server-to-server notification. Updates payment status independently of the user redirect. Always returns `200` to acknowledge receipt.
+---
 
 ---
 
 ## 🛰️ LIVE TRACKING API
 
-> The C++ tracking server (`LOCATION_SERVER_URL`) stores location data sent directly from the mobile app. Django fetches from it server-side to avoid CORS issues.
-
----
-
-### 3️⃣5️⃣ Track Event — Live Crew Locations
+### Track Event — Live Crew Locations
 
 `GET /events/<event_id>/track/`
 
-**Role:** Any authenticated user
+Fetches last known location of every assigned crew member from the C++ tracking server. A failure for one member returns `status: "offline"` without aborting the response.
 
-Fetches the last known location of every crew member assigned to the event from the C++ tracking server. A failure for one member does not abort the response — that member gets `status: "offline"` with a `location_error` message.
-
-**Response**
+**Response:**
 
 ```json
 {
   "success": true,
-  "message": "Tracking data fetched",
   "data": {
     "event": {
       "id": "uuid",
       "event_name": "Sharma Wedding",
-      "event_type": "Wedding",
       "status": "staff_allocated",
-      "event_start_datetime": "2026-04-10 18:00:00",
-      "event_end_datetime": "2026-04-10 23:00:00",
       "venue_name": "Royal Orchid Palace",
+      "venue_lat": 12.9716,
+      "venue_lng": 77.5946,
       "city": "Bangalore",
-      "state": "Karnataka",
       "client_name": "Riya Sharma",
       "crew_count": 5
     },
@@ -1466,18 +982,6 @@ Fetches the last known location of every crew member assigned to the event from 
         "timestamp": "2026-04-10T19:45:00Z",
         "status": "on_event",
         "location_error": null
-      },
-      {
-        "id": "profile_uuid_2",
-        "name": "Anita",
-        "stage_name": "",
-        "role": "Staff",
-        "image_url": "https://s3.amazonaws.com/...",
-        "lat": null,
-        "lng": null,
-        "timestamp": null,
-        "status": "offline",
-        "location_error": "Cannot reach location server (connection refused)"
       }
     ],
     "total_crew": 5,
@@ -1496,13 +1000,11 @@ Fetches the last known location of every crew member assigned to the event from 
 
 ---
 
-### Location Update (Mobile App → C++ Server directly)
+### Location Update _(Mobile App → C++ Server directly)_
 
 `POST http://<LOCATION_SERVER_URL>:9090/api/location/update`
 
-> This is called **directly by the mobile app**. The Django backend is not involved.
-
-**Body**
+> Called **directly by the mobile app**. Django is not involved.
 
 ```json
 {
@@ -1512,8 +1014,30 @@ Fetches the last known location of every crew member assigned to the event from 
 }
 ```
 
-**Response**
+---
+
+## 📋 Standard Response Shape
+
+All endpoints return:
 
 ```json
-{ "status": "ok" }
+{
+  "success": true | false,
+  "message": "Human-readable message",
+  "data": { }
+}
 ```
+
+Common HTTP status codes:
+
+| Code | Meaning                                      |
+| ---- | -------------------------------------------- |
+| 200  | Success                                      |
+| 201  | Created                                      |
+| 400  | Bad request / validation error               |
+| 401  | Missing or invalid token                     |
+| 403  | Forbidden (wrong role or pending approval)   |
+| 404  | Resource not found                           |
+| 405  | Wrong HTTP method                            |
+| 409  | Conflict (duplicate email/phone, crew clash) |
+| 500  | Internal server error                        |

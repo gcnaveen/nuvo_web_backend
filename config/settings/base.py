@@ -108,3 +108,17 @@ AWS_S3_BASE_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.am
 
 LOCATION_SERVER_URL = os.getenv("LOCATION_SERVER_URL")
 LOCATION_SERVER_TIMEOUT = 5   # seconds, optional
+
+# settings.py additions:
+ 
+# PhonePe (sandbox)
+PHONEPE_MERCHANT_ID  = os.environ.get("PHONEPE_MERCHANT_ID",  "PGTESTPAYUAT")
+PHONEPE_SALT_KEY     = os.environ.get("PHONEPE_SALT_KEY",     "")
+PHONEPE_SALT_INDEX   = os.environ.get("PHONEPE_SALT_INDEX",   "1")
+PHONEPE_BASE_URL     = os.environ.get("PHONEPE_BASE_URL",     "https://api-preprod.phonepe.com/apis/pg-sandbox")
+PHONEPE_REDIRECT_URL = os.environ.get("PHONEPE_REDIRECT_URL", "https://yourdomain.com/api/events/payment/callback/")
+PHONEPE_CALLBACK_URL = os.environ.get("PHONEPE_CALLBACK_URL", "https://yourdomain.com/api/events/payment/webhook/")
+ 
+# Location tracking C++ server
+LOCATION_SERVER_URL     = os.environ.get("LOCATION_SERVER_URL",     "http://localhost:9090")
+LOCATION_SERVER_TIMEOUT = os.environ.get("LOCATION_SERVER_TIMEOUT", "5")

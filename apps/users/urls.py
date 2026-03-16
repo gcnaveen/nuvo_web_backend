@@ -38,7 +38,9 @@ urlpatterns = [
     path("profile/update/",  update_profile),
 
     # ── Self-registration (public — no auth) ─────────────────────
-    path("register/staff/",  staff_self_register),      # ← NEW  POST multipart/form-data
+    path("register/staff/",  staff_self_register),      # ← NEW  POST multipart/form-data 
+# 
+
 
     # ── Complete profile (post-OTP, role-gated) ──────────────────
     path("complete/client/",  complete_client_profile),

@@ -907,10 +907,12 @@ def track_event(request, event_id):
             "status":               event.status,
             "event_start_datetime": str(event.event_start_datetime) if event.event_start_datetime else None,
             "event_end_datetime":   str(event.event_end_datetime)   if event.event_end_datetime   else None,
-            "venue_name":           event.venue.venue_name if event.venue else "",
+            "venue_name":           event.venue.venue_name           if event.venue else "",
+            "venue_lat":            event.venue.latitude             if event.venue else None,
+            "venue_lng":            event.venue.longitude            if event.venue else None,
             "city":                 event.city,
             "state":                event.state,
-            "client_name":          event.client.full_name if event.client else "",
+            "client_name":          event.client.full_name           if event.client else "",
             "crew_count":           event.crew_count,
         }
 
