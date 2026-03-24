@@ -29,6 +29,7 @@ from .views import (
     admin_delete_mua,
     admin_upload_mua_images,
     admin_delete_mua_gallery_image,
+    list_staff_modal,
 )
 from .staff_registration import staff_self_register   # ← NEW
 
@@ -78,4 +79,9 @@ urlpatterns = [
     path("api/staff/<str:staff_id>/",            get_staff_detail),
     path("api/makeup-artists/",                  list_makeup_artists),
     path("api/makeup-artists/<str:mua_id>/",     get_mua_detail),
+
+
+
+    # mobile apis 
+    path("mobile/modals_list_filter/", list_staff_modal),
 ]

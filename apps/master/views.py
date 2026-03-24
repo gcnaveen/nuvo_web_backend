@@ -95,7 +95,7 @@ def create_event_theme(request):
 
 @csrf_exempt
 @require_auth
-@require_role(["ADMIN"])
+@require_role(["ADMIN", "CLIENT"])
 def list_event_themes(request):
     """GET /master/themes/"""
     if request.method != "GET":
@@ -105,6 +105,7 @@ def list_event_themes(request):
             [_ser_theme(t) for t in EventTheme.objects().order_by("-created_at")])
     except Exception as e:
         return api_response(False, str(e), status=500)
+    
 
 @csrf_exempt
 @require_auth
@@ -158,7 +159,6 @@ def delete_event_theme(request, theme_id):
         return api_response(True, "Theme deleted", {})
     except Exception as e:
         return api_response(False, str(e), status=500)
-
 
 
 
@@ -399,6 +399,8 @@ def filter_uniform_categories(request):
         return api_response(True, "Uniform categories fetched", [_ser_uniform(c) for c in qs])
     except Exception as e:
         return api_response(False, str(e), status=500)
+    
+    
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])

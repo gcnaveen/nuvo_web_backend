@@ -426,7 +426,7 @@ def upload_staff_images(request):
  
 @csrf_exempt
 @require_auth
-@require_role(["ADMIN"])
+@require_role(["ADMIN", "CLIENT"])
 def list_staff(request):
     if request.method != "GET":
         return api_response(False, "Invalid request method", status=405)
@@ -516,9 +516,100 @@ def list_staff(request):
         return api_response(False, str(e), status=500)
 
 
-# ─────────────────────────────────────────────
-#  ADMIN — LIST CLIENTS  (search + filter + pagination)
-# ─────────────────────────────────────────────
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN", "CLIENT"])
+def list_staff_modal(request):
+    """
+    GET /api/staff/list/
+    Filters: gender, city, package, search, status
+    """
+    if request.method != "GET":
+        return api_response(False, "Invalid request method", status=405)
+
+    from mongoengine.queryset.visitor import Q
+    from datetime import datetime
+
+    try:
+        # 1. Extract Filter Parameters
+        gender   = request.GET.get("gender", "").strip().lower()
+        city     = request.GET.get("city", "").strip()
+        package  = request.GET.get("package", "").strip().upper()
+        search   = request.GET.get("search", "").strip()
+        status   = request.GET.get("status", "").strip()
+
+        # 2. Pagination
+        try:
+            page      = max(1, int(request.GET.get("page", 1)))
+            page_size = min(100, max(1, int(request.GET.get("page_size", 15))))
+        except ValueError:
+            return api_response(False, "page and page_size must be integers", status=400)
+
+        # 3. Build Query
+        qs = StaffProfile.objects()
+
+        if search:
+            qs = qs.filter(Q(full_name__icontains=search) | Q(stage_name__icontains=search))
+        
+        if gender:
+            # Handles 'male', 'female', or 'unisex'
+            qs = qs.filter(gender__iexact=gender)
+            
+        if city:
+            qs = qs.filter(city__icontains=city) # icontains is safer for city search
+            
+        if package:
+            qs = qs.filter(package__iexact=package) # e.g., SILVER, GOLD, PLATINUM
+
+        if status == "assigned":
+            qs = qs.filter(status="onevent")
+        elif status == "unassigned":
+            qs = qs.filter(status__ne="onevent")
+
+        # 4. Execute Query with Pagination
+        total      = qs.count()
+        staff_list = qs.skip((page - 1) * page_size).limit(page_size)
+
+        # 5. Format Response Data
+        results = []
+        for profile in staff_list:
+            try:
+                user = profile.user
+            except Exception:
+                continue # Skip if user reference is broken
+
+            results.append({
+                "id": str(profile.id),
+                "full_name": profile.full_name or "",
+                "stage_name": profile.stage_name or "",
+                "gender": profile.gender or "",
+                "city": profile.city or "",
+                "height": profile.height, # Added height
+                "package": profile.package or "SILVER",
+                "profile_picture": profile.profile_picture or "",
+                "gallery_images": profile.gallery_images or [], # Included full gallery
+                "status": getattr(user, 'status', 'active'),
+                "experience_in_years": profile.experience_in_years,
+            })
+
+        return api_response(True, "Staff fetched successfully", {
+            "results": results,
+            "pagination": {
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": max(1, -(-total // page_size))
+            }
+        })
+
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+# ─────────────────────────────────────────────   
+#  ADMIN — LIST CLIENTS  (search + filter + pagination) 
+# ─────────────────────────────────────────────   
 #
 #  Query params:
 #    search        – name or email (case-insensitive contains)
