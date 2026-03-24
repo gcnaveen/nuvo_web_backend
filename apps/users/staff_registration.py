@@ -65,12 +65,13 @@ def _generate_stage_name(max_attempts: int = 20) -> str:
 def _s3_client():
     import boto3
     from django.conf import settings
-    return boto3.client(
-        "s3",
-        aws_access_key_id     = settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key = settings.AWS_SECRET_ACCESS_KEY,
-        region_name           = settings.AWS_S3_REGION_NAME,
-    )
+    kwargs = {"region_name": settings.AWS_S3_REGION_NAME}
+    if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
+        kwargs.update(
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        )
+    return boto3.client("s3", **kwargs)
 
 def _s3_upload(file_obj, folder: str, filename: str = None) -> str:
     from django.conf import settings

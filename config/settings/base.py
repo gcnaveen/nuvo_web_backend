@@ -99,8 +99,18 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS") == "True"
 
 
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+S3_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY_ID")
+S3_SECRET_ACCESS_KEY = os.getenv("S3_SECRET_ACCESS_KEY")
+
+# On AWS Lambda, AWS provides temporary credentials via AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_SESSION_TOKEN.
+# Do NOT pass those explicitly to boto3 unless you also pass the session token.
+# We only use explicit keys on Lambda if you provided S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY.
+if os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+    AWS_ACCESS_KEY_ID = S3_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY = S3_SECRET_ACCESS_KEY
+else:
+    AWS_ACCESS_KEY_ID = S3_ACCESS_KEY_ID or os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = S3_SECRET_ACCESS_KEY or os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
 AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME")
 
