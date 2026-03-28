@@ -204,7 +204,7 @@ def parse_datetime(value: str, field_name: str):
 
 @csrf_exempt
 @require_auth
-@require_role(["ADMIN"])
+@require_role(["ADMIN", "CLIENT"])
 def create_event(request):
     if request.method != "POST":
         return api_response(False, "Invalid request method", status=405)
@@ -304,6 +304,7 @@ def create_event(request):
 
     except Exception as e:
         return api_response(False, str(e), status=500)
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1095,6 +1096,87 @@ def my_events(request):
 
     except Exception as e:
         return api_response(False, str(e), status=500)
-    
+
+
+
+@csrf_exempt
+@require_auth
+@require_role(["CLIENT"])
+def client_my_events(request):
+    """
+    GET /api/events/my-events/
+    Returns a simplified list of events specifically for the logged-in CLIENT.
+    """
+
+    print("  ----------- INSIDE -----------------  ")
+    if request.method != "GET":
+        return api_response(False, "Invalid request method", status=405)
+
+    try:
+        from apps.users.models import ClientProfile
+        
+        # 1. Find the ClientProfile linked to the currently logged-in User
+        client_profile = ClientProfile.objects(user=request.user).first()
+        if not client_profile:
+            return api_response(False, "Client profile not found for this user", status=404)
+
+        # 2. Handle Pagination (Optional but recommended)
+        try:
+            page      = max(1, int(request.GET.get("page", 1)))
+            page_size = min(100, max(1, int(request.GET.get("page_size", 15))))
+        except ValueError:
+            return api_response(False, "page and page_size must be integers", status=400)
+
+        # 3. Fetch ONLY this client's events
+        qs = Event.objects(client=client_profile)
+        
+        total  = qs.count()
+        offset = (page - 1) * page_size
+        events = qs.order_by("-created_at").skip(offset).limit(page_size)
+
+        # 4. Format the exact response you requested
+        results = []
+        for event in events:
+            # Safely get the theme name (assuming your EventTheme model uses 'name' or 'theme_name')
+            theme_name = ""
+            if event.theme:
+                theme_name = getattr(event.theme, 'name', '') or getattr(event.theme, 'theme_name', '')
+
+            # Extract payment details and order ID
+            payment_data = {}
+            order_id = ""
+            if event.payment:
+                order_id = event.payment.phonepay_order_id
+                payment_data = {
+                    "total_amount": event.payment.total_amount,
+                    "gst_amount": event.payment.gst_amount,
+                    "tax_amount": event.payment.tax_amount,
+                    "paid_amount": event.payment.paid_amount,
+                    "payment_status": event.payment.payment_status,
+                    "phonepay_transaction_id": event.payment.phonepay_transaction_id,
+                }
+
+            results.append({
+                "event_id": str(event.id),
+                "event_name": event.event_name,
+                "event_theme_name": theme_name,
+                "order_id": order_id,
+                "payment_details": payment_data,
+                "status": event.status
+            })
+
+        return api_response(True, "My events fetched successfully", {
+            "results": results,
+            "pagination": {
+                "total":       total,
+                "page":        page,
+                "page_size":   page_size,
+                "total_pages": -(-total // page_size),
+            }
+        })
+
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
 
     

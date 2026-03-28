@@ -742,7 +742,7 @@ Plan names (fixed): `Diamond` · `Platinum` · `Gold` · `Silver` · `Bronze`
 
 ---
 
-### Create Event _(Admin only)_
+### Create Event _(Admin and client)_
 
 `POST /events/create/`
 

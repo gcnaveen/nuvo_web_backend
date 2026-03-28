@@ -8,6 +8,12 @@ urlpatterns = [
     # ── CRUD ─────────────────────────────────────────────────────
     path("",                                  views.list_events,         name="list_events"),
     path("create/",                           views.create_event,        name="create_event"),
+
+    # ── Client-facing (mobile app) ────────────────────────────────
+    # Moved ABOVE the <str:event_id> generic paths!
+    path("get-my-events/",                    views.client_my_events,    name="get_my_events"),
+
+
     path("<str:event_id>/",                   views.get_event,           name="get_event"),
     path("<str:event_id>/update/",            views.update_event,        name="update_event"),
     path("<str:event_id>/delete/",            views.delete_event,        name="delete_event"),
@@ -25,6 +31,4 @@ urlpatterns = [
     path("payment/callback/",                 views.payment_callback,    name="payment_callback"),
     path("payment/webhook/",                  views.payment_webhook,     name="payment_webhook"),
 
-    # ── Client-facing (mobile app) ────────────────────────────────
-    path("my-events/",                        views.my_events,           name="my_events"),
 ]

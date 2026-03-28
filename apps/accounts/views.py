@@ -33,16 +33,32 @@ def build_user_response(user):
     from apps.users.models import ClientProfile, StaffProfile, MakeupArtistProfile
 
     profile_completed = False
+    subscription_plan = None  
+    profile_id = None  # <-- Added default state for profile ID
 
     if user.role == "CLIENT":
-        profile_completed = ClientProfile.objects(user=user).first() is not None
+        profile = ClientProfile.objects(user=user).first()
+        if profile:
+            profile_completed = True
+            subscription_plan = profile.subscription_plan
+            profile_id = str(profile.id)  # <-- Grab the ClientProfile _id
+            
     elif user.role == "STAFF":
-        profile_completed = StaffProfile.objects(user=user).first() is not None
+        profile = StaffProfile.objects(user=user).first()
+        if profile:
+            profile_completed = True
+            subscription_plan = profile.package
+            profile_id = str(profile.id)  # <-- Grab the StaffProfile _id
+            
     elif user.role == "MAKEUP_ARTIST":
-        profile_completed = MakeupArtistProfile.objects(user=user).first() is not None
+        profile = MakeupArtistProfile.objects(user=user).first()
+        if profile:
+            profile_completed = True
+            profile_id = str(profile.id)  # <-- Grab the MakeupArtistProfile _id
 
     return {
-        "id": str(user.id),
+        "id": str(user.id),                  # This is the core User ID
+        "profile_id": profile_id,            # <-- Added to response (ClientProfile ID)
         "email": user.email,
         "phone_number": user.phone_number,
         "full_name": user.full_name or "",
@@ -50,6 +66,7 @@ def build_user_response(user):
         "status": user.status,
         "is_approved": user.is_approved,
         "profile_completed": profile_completed,
+        "subscription_plan": subscription_plan, 
     }
 
 
