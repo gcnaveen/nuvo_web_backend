@@ -199,7 +199,7 @@ Required: `event_name`, `city`, `state`, `client_id`, `venue.venue_name`, `event
 }
 ```
 
-## get my events [GET] `http://127.0.0.1:8000/api/events/get-my-events/`
+## get my events [GET] `http://127.0.0.1:8000/api/events/get-my-events/` 
 
 ### Responce
 
@@ -246,6 +246,134 @@ Required: `event_name`, `city`, `state`, `client_id`, `venue.venue_name`, `event
       "page_size": 15,
       "total_pages": 1
     }
+  }
+}
+```
+
+
+
+# 🧑‍💼 STAFF APIs (/api/events/staff/)
+
+Note: All staff endpoints require a valid JWT token associated with a STAFF role account.
+
+## Get Upcoming Platform Events
+### [GET] `/api/events/staff/upcoming-all/`
+### Query Parameters:
+```
+?page=1
+?page_size=15
+```
+### Response
+JSON
+```
+{
+  "success": true,
+  "message": "Upcoming events fetched",
+  "data": {
+    "results": [
+      {
+        "id": "uuid",
+        "event_name": "Tech Startup Launch",
+        "event_type": "Corporate",
+        "city": "Dubai",
+        "state": "Dubai",
+        "event_start_datetime": "2026-05-15 09:00:00",
+        "event_end_datetime": "2026-05-15 18:00:00",
+        "status": "created",
+        "theme_id": "uuid",
+        "uniform_id": "uuid"
+      }
+    ],
+    "total": 45
+  }
+}
+```
+
+## Get My Assigned Events
+### [GET] `/api/events/staff/assigned/`
+
+Returns active events explicitly assigned to the currently logged-in staff member.
+### Query Parameters:
+```
+?page=1
+?page_size=15
+```
+### Response
+```
+JSON
+{
+  "success": true,
+  "message": "Assigned events fetched",
+  "data": {
+    "results": [
+      {
+        "id": "uuid",
+        "event_name": "Sharma Wedding",
+        "event_type": "Wedding",
+        "city": "Bangalore",
+        "state": "Karnataka",
+        "event_start_datetime": "2026-04-10 18:00:00",
+        "event_end_datetime": "2026-04-10 23:00:00",
+        "status": "staff_allocated"
+      }
+    ],
+    "total": 3
+  }
+}
+```
+
+## Get My Completed Events
+### [GET] `/api/events/staff/completed/`
+Returns past events successfully completed by the currently logged-in staff member.
+### Query Parameters:
+```
+?page=1
+?page_size=15
+```
+### Response
+```
+JSON
+{
+  "success": true,
+  "message": "Completed events fetched",
+  "data": {
+    "results": [
+      {
+        "id": "uuid",
+        "event_name": "Fashion Week Gala",
+        "event_type": "Fashion",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "event_start_datetime": "2026-01-20 18:00:00",
+        "event_end_datetime": "2026-01-20 23:00:00",
+        "status": "completed"
+      }
+    ],
+    "total": 12
+  }
+}
+```
+
+
+## Update Duty / Online Status
+### [PUT] `/api/events/staff/online-status/`
+Updates the staff member's live tracking status and last online timestamp.
+### Payload
+```
+JSON
+{
+  "is_online": true
+}
+```
+### Response
+```
+JSON
+{
+  "success": true,
+  "message": "Online status updated successfully",
+  "data": {
+    "is_online": true,
+    "last_online": "2026-03-29 16:20:00.000000"
   }
 }
 ```

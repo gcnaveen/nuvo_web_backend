@@ -1179,4 +1179,156 @@ def client_my_events(request):
         return api_response(False, str(e), status=500)
 
 
-    
+
+# ─────────────────────────────────────────────────────────────
+#  STAFF APIs (Mobile App)
+# ─────────────────────────────────────────────────────────────
+
+
+@csrf_exempt
+@require_auth
+@require_role(["STAFF"])
+def staff_upcoming_events(request):
+    """
+    GET /api/events/staff/upcoming-all/
+    Returns all upcoming events in the platform (not cancelled, not completed)
+    that are starting in the future.
+    """
+    if request.method != "GET":
+        return api_response(False, "Invalid request method", status=405)
+
+    try:
+        page      = max(1, int(request.GET.get("page", 1)))
+        page_size = min(100, max(1, int(request.GET.get("page_size", 15))))
+
+        # All events happening in the future that aren't cancelled or done
+        qs = Event.objects(
+            event_start_datetime__gte=datetime.utcnow(),
+            status__nin=["cancelled", "completed"]
+        )
+
+        total  = qs.count()
+        offset = (page - 1) * page_size
+        events = qs.order_by("event_start_datetime").skip(offset).limit(page_size)
+
+        return api_response(True, "Upcoming events fetched", {
+            "results": [serialize_event(e, full=False) for e in events],
+            "total": total
+        })
+
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["STAFF"])
+def staff_assigned_events(request):
+    """
+    GET /api/events/staff/assigned/
+    Returns events specifically assigned to the logged-in staff member.
+    """
+    if request.method != "GET":
+        return api_response(False, "Invalid request method", status=405)
+
+    try:
+        from apps.users.models import StaffProfile
+        profile = StaffProfile.objects(user=request.user).first()
+        if not profile:
+            return api_response(False, "Staff profile not found", status=404)
+
+        page      = max(1, int(request.GET.get("page", 1)))
+        page_size = min(100, max(1, int(request.GET.get("page_size", 15))))
+
+        # Events assigned to this profile that are NOT completed/cancelled
+        qs = Event.objects(
+            crew_members=profile,
+            status__nin=["cancelled", "completed"]
+        )
+
+        total  = qs.count()
+        offset = (page - 1) * page_size
+        events = qs.order_by("event_start_datetime").skip(offset).limit(page_size)
+
+        return api_response(True, "Assigned events fetched", {
+            "results": [serialize_event(e, full=False) for e in events],
+            "total": total
+        })
+
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["STAFF"])
+def staff_completed_events(request):
+    """
+    GET /api/events/staff/completed/
+    Returns past events successfully completed by the logged-in staff member.
+    """
+    if request.method != "GET":
+        return api_response(False, "Invalid request method", status=405)
+
+    try:
+        from apps.users.models import StaffProfile
+        profile = StaffProfile.objects(user=request.user).first()
+        if not profile:
+            return api_response(False, "Staff profile not found", status=404)
+
+        page      = max(1, int(request.GET.get("page", 1)))
+        page_size = min(100, max(1, int(request.GET.get("page_size", 15))))
+
+        # Events assigned to this profile that ARE completed
+        qs = Event.objects(
+            crew_members=profile,
+            status="completed"
+        )
+
+        total  = qs.count()
+        offset = (page - 1) * page_size
+        events = qs.order_by("-event_end_datetime").skip(offset).limit(page_size)
+
+        return api_response(True, "Completed events fetched", {
+            "results": [serialize_event(e, full=False) for e in events],
+            "total": total
+        })
+
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["STAFF"])
+def update_staff_online_status(request):
+    """
+    PUT /api/events/staff/online-status/
+    Updates the staff member's 'last_online' timestamp and 'is_online' flag.
+    """
+    if request.method != "PUT":
+        return api_response(False, "Invalid request method", status=405)
+
+    try:
+        from apps.users.models import StaffProfile
+        profile = StaffProfile.objects(user=request.user).first()
+        if not profile:
+            return api_response(False, "Staff profile not found", status=404)
+
+        body = json.loads(request.body)
+        
+        # Accept boolean to toggle online/offline state
+        is_online = body.get("is_online", True)
+
+        profile.is_online = is_online
+        profile.last_online = datetime.utcnow()
+        profile.save()
+
+        return api_response(True, "Online status updated successfully", {
+            "is_online": profile.is_online,
+            "last_online": str(profile.last_online)
+        })
+
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+

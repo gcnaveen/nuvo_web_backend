@@ -31,4 +31,11 @@ urlpatterns = [
     path("payment/callback/",                 views.payment_callback,    name="payment_callback"),
     path("payment/webhook/",                  views.payment_webhook,     name="payment_webhook"),
 
+
+    # ── Staff-facing (mobile app) ─────────────────────────────────
+    path("staff/upcoming-all/", views.staff_upcoming_events,      name="staff_upcoming_events"),
+    path("staff/assigned/",     views.staff_assigned_events,      name="staff_assigned_events"),
+    path("staff/completed/",    views.staff_completed_events,     name="staff_completed_events"),
+    path("staff/online-status/",views.update_staff_online_status, name="update_staff_online_status"),
+
 ]

@@ -163,6 +163,10 @@ class StaffProfile(Document):
 
     joined_date = DateTimeField(default=datetime.utcnow)
 
+    # ── Tracking / Duty Status ─────────────────────────────────
+    is_online   = BooleanField(default=False)
+    last_online = DateTimeField(default=datetime.utcnow)
+
 
 
 # ─────────────────────────────────────────────────────────────
