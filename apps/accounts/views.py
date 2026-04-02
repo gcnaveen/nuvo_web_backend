@@ -120,7 +120,7 @@ def send_otp(request):
         # ── Generate & store OTP ───────────────────────────────────
         OTP.objects(email=email).delete()
         if email == "actest967@gmail.com":
-            otp_code = "123456"  # only for playstore verification code 
+            otp_code = "1234"  # only for playstore verification code 
         else:
             otp_code = OTP.generate_otp()
             # otp_code = "123456"  # ← uncomment for testing  
