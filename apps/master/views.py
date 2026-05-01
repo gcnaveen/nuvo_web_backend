@@ -48,6 +48,27 @@ def _s3_upload(file_obj, folder: str, filename: str = None) -> str:
     return f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
 
 
+def _events_using(filter_kwargs: dict, exclude_statuses=("cancelled",)) -> list:
+    """
+    Returns a list of compact event dicts that match filter_kwargs
+    and are NOT in exclude_statuses.
+    Used by every delete function below.
+    """
+    qs = Event.objects(**filter_kwargs)
+    if exclude_statuses:
+        qs = qs.filter(status__nin=list(exclude_statuses))
+    result = []
+    for ev in qs:
+        result.append({
+            "id":         str(ev.id),
+            "event_name": ev.event_name,
+            "status":     ev.status,
+            "city":       ev.city,
+            "event_start_datetime": str(ev.event_start_datetime) if ev.event_start_datetime else None,
+        })
+    return result
+
+
 
 
 def api_response(success, message, data=None, status=200):
@@ -144,6 +165,7 @@ def update_event_theme(request, theme_id):
     except Exception as e:
         return api_response(False, str(e), status=500)
 
+
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
@@ -155,10 +177,26 @@ def delete_event_theme(request, theme_id):
         theme = EventTheme.objects(id=theme_id).first()
         if not theme:
             return api_response(False, "Theme not found", status=404)
+
+        # -- Reference check --
+        in_use = _events_using({"theme": theme})
+        if in_use:
+            return api_response(
+                False,
+                f"Cannot delete '{theme.theme_name}' — it is used by "
+                f"{len(in_use)} active event(s). Remove the theme from those "
+                f"events first, or wait until they are cancelled/completed.",
+                data={"events_using_this": in_use},
+                status=409,
+            )
+
+        # Safe to delete — clean up S3 assets too
         _s3_delete(theme.cover_image or "")
-        for u in (theme.gallery_images or []): _s3_delete(u)
+        for url in (theme.gallery_images or []):
+            _s3_delete(url)
         theme.delete()
-        return api_response(True, "Theme deleted", {})
+        return api_response(True, "Theme deleted successfully")
+
     except Exception as e:
         return api_response(False, str(e), status=500)
 
@@ -414,9 +452,24 @@ def delete_uniform_category(request, category_id):
         cat = UniformCategory.objects(id=category_id).first()
         if not cat:
             return api_response(False, "Uniform category not found", status=404)
-        for u in (cat.images or []): _s3_delete(u)
+
+        # -- Reference check --
+        in_use = _events_using({"uniform": cat})
+        if in_use:
+            return api_response(
+                False,
+                f"Cannot delete '{cat.category_name}' — it is assigned to "
+                f"{len(in_use)} active event(s). Reassign the uniform on those "
+                f"events first.",
+                data={"events_using_this": in_use},
+                status=409,
+            )
+
+        for url in (cat.images or []):
+            _s3_delete(url)
         cat.delete()
-        return api_response(True, "Uniform category deleted", {})
+        return api_response(True, "Uniform category deleted successfully")
+
     except Exception as e:
         return api_response(False, str(e), status=500)
 

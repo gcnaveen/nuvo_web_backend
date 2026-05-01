@@ -2,17 +2,20 @@
 
 from django.urls import path
 from . import views
+from .dashboard_views import admin_dashboard_stats, on_duty_staff
 
 urlpatterns = [
+
+    # ── Admin Dashboard ───────────────────────────────────────────
+    path("dashboard/stats/",    admin_dashboard_stats, name="dashboard_stats"),
+    path("dashboard/on-duty/",  on_duty_staff,         name="on_duty_staff"),
 
     # ── CRUD ─────────────────────────────────────────────────────
     path("",                                  views.list_events,         name="list_events"),
     path("create/",                           views.create_event,        name="create_event"),
 
     # ── Client-facing (mobile app) ────────────────────────────────
-    # Moved ABOVE the <str:event_id> generic paths!
     path("get-my-events/",                    views.client_my_events,    name="get_my_events"),
-
 
     path("<str:event_id>/",                   views.get_event,           name="get_event"),
     path("<str:event_id>/update/",            views.update_event,        name="update_event"),
@@ -31,11 +34,10 @@ urlpatterns = [
     path("payment/callback/",                 views.payment_callback,    name="payment_callback"),
     path("payment/webhook/",                  views.payment_webhook,     name="payment_webhook"),
 
-
     # ── Staff-facing (mobile app) ─────────────────────────────────
-    path("staff/upcoming-all/", views.staff_upcoming_events,      name="staff_upcoming_events"),
-    path("staff/assigned/",     views.staff_assigned_events,      name="staff_assigned_events"),
-    path("staff/completed/",    views.staff_completed_events,     name="staff_completed_events"),
-    path("staff/online-status/",views.update_staff_online_status, name="update_staff_online_status"),
+    path("staff/upcoming-all/",   views.staff_upcoming_events,      name="staff_upcoming_events"),
+    path("staff/assigned/",       views.staff_assigned_events,      name="staff_assigned_events"),
+    path("staff/completed/",      views.staff_completed_events,     name="staff_completed_events"),
+    path("staff/online-status/",  views.update_staff_online_status, name="update_staff_online_status"),
 
 ]

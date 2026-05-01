@@ -19,6 +19,27 @@ def api_response(success, message, data=None, status=200):
     }, status=status)
 
 
+def _events_using(filter_kwargs: dict, exclude_statuses=("cancelled",)) -> list:
+    """
+    Returns a list of compact event dicts that match filter_kwargs
+    and are NOT in exclude_statuses.
+    Used by every delete function below.
+    """
+    qs = Event.objects(**filter_kwargs)
+    if exclude_statuses:
+        qs = qs.filter(status__nin=list(exclude_statuses))
+    result = []
+    for ev in qs:
+        result.append({
+            "id":         str(ev.id),
+            "event_name": ev.event_name,
+            "status":     ev.status,
+            "city":       ev.city,
+            "event_start_datetime": str(ev.event_start_datetime) if ev.event_start_datetime else None,
+        })
+    return result
+
+
 # ─────────────────────────────────────────────
 #  PROFILE (Auth User)
 # ─────────────────────────────────────────────
@@ -1099,34 +1120,64 @@ def admin_delete_staff(request, staff_id):
     """
     DELETE /users/admin/staff/<staff_id>/delete/
 
-    Hard deletes a staff member — removes both StaffProfile and User from DB.
-    This is irreversible.
+    Blocked if the staff member is assigned to any upcoming or
+    in-progress events. Allowed if they only appear in completed
+    or cancelled events (history is preserved — the event record
+    keeps the reference but safe_deref handles it gracefully).
     """
     if request.method != "DELETE":
         return api_response(False, "Invalid request method", status=405)
-
     try:
         profile = StaffProfile.objects(id=staff_id).first()
         if not profile:
             return api_response(False, "Staff member not found", status=404)
 
-        user = profile.user
+        # -- Reference check: only block on ACTIVE events --
+        # completed / cancelled events are fine — safe_deref handles orphaned refs
+        in_use = _events_using(
+            {"crew_members": profile},
+            exclude_statuses=("cancelled", "completed"),
+        )
+        if in_use:
+            names = ", ".join(f"'{e['event_name']}'" for e in in_use[:3])
+            suffix = f" and {len(in_use) - 3} more" if len(in_use) > 3 else ""
+            return api_response(
+                False,
+                f"Cannot delete {profile.full_name or 'this staff member'} — "
+                f"they are assigned to {len(in_use)} upcoming/active event(s): "
+                f"{names}{suffix}. Remove them from the crew first.",
+                data={"events_using_this": in_use},
+                status=409,
+            )
 
-        # Delete profile first (has reference to user)
+        # Safe to delete
+        # Safely get user ref before deleting profile
+        try:
+            user = profile.user
+            _ = user.id   # force dereference
+        except Exception:
+            user = None
+
+        # Clean up S3 assets
+        try:
+            from apps.common.s3_utils import s3_delete as _s3_delete_user
+            _s3_delete_user(profile.profile_picture or "")
+            for url in (profile.gallery_images or []):
+                _s3_delete_user(url)
+        except Exception:
+            pass   # non-fatal — continue with delete
+
         profile.delete()
-
-        # Delete user account
         if user:
-            user.delete()
+            try:
+                user.delete()
+            except Exception:
+                pass
 
         return api_response(True, "Staff member deleted successfully")
 
     except Exception as e:
         return api_response(False, str(e), status=500)
-
-
-
-
 
 # Add to apps/users/views.py
 
@@ -1137,32 +1188,51 @@ def admin_delete_client(request, client_id):
     """
     DELETE /users/admin/clients/<client_id>/delete/
 
-    Hard deletes a client — removes both ClientProfile and User from DB.
-    This is irreversible.
+    Blocked if the client has any upcoming or in-progress events.
+    Past (completed/cancelled) events are fine to keep as records.
     """
     if request.method != "DELETE":
         return api_response(False, "Invalid request method", status=405)
-
     try:
         profile = ClientProfile.objects(id=client_id).first()
         if not profile:
             return api_response(False, "Client not found", status=404)
 
-        user = profile.user
+        # -- Reference check --
+        in_use = _events_using(
+            {"client": profile},
+            exclude_statuses=("cancelled", "completed"),
+        )
+        if in_use:
+            names = ", ".join(f"'{e['event_name']}'" for e in in_use[:3])
+            suffix = f" and {len(in_use) - 3} more" if len(in_use) > 3 else ""
+            return api_response(
+                False,
+                f"Cannot delete {profile.full_name or 'this client'} — "
+                f"they have {len(in_use)} upcoming/active event(s): "
+                f"{names}{suffix}. Cancel or complete those events first.",
+                data={"events_using_this": in_use},
+                status=409,
+            )
 
-        # Delete profile first (has reference to user)
+        # Safely dereference user
+        try:
+            user = profile.user
+            _ = user.id
+        except Exception:
+            user = None
+
         profile.delete()
-
-        # Delete user account
         if user:
-            user.delete()
+            try:
+                user.delete()
+            except Exception:
+                pass
 
         return api_response(True, "Client deleted successfully")
 
     except Exception as e:
         return api_response(False, str(e), status=500)
-
-
 
 
 def _s3_client():
@@ -1703,28 +1773,41 @@ def admin_delete_mua(request, mua_id):
     """DELETE /users/admin/makeup-artists/<mua_id>/delete/"""
     if request.method != "DELETE":
         return api_response(False, "Invalid request method", status=405)
-
     try:
+        from apps.users.models import MakeupArtistProfile
         profile = MakeupArtistProfile.objects(id=mua_id).first()
         if not profile:
             return api_response(False, "Makeup artist not found", status=404)
 
-        user = profile.user
+        # MUA is not in Event.crew_members yet, so no reference check needed.
+        # Kept here as a placeholder for when/if MUA is added to events.
 
-        # Delete all S3 images
-        if profile.profile_picture:
-            _s3_delete(profile.profile_picture)
-        for img_url in (profile.gallery_images or []):
-            _s3_delete(img_url)
+        try:
+            user = profile.user
+            _ = user.id
+        except Exception:
+            user = None
+
+        try:
+            from apps.common.s3_utils import s3_delete as _s3_delete_mua
+            _s3_delete_mua(profile.profile_picture or "")
+            for url in (profile.gallery_images or []):
+                _s3_delete_mua(url)
+        except Exception:
+            pass
 
         profile.delete()
         if user:
-            user.delete()
+            try:
+                user.delete()
+            except Exception:
+                pass
 
-        return api_response(True, "Makeup artist deleted successfully", {})
+        return api_response(True, "Makeup artist deleted successfully")
 
     except Exception as e:
         return api_response(False, str(e), status=500)
+    
 
 
 # ── 6. Admin Upload MUA Images ────────────────────────────────────────────────
