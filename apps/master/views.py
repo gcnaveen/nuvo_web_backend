@@ -18,6 +18,8 @@ import boto3
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from .models import EventTheme, UniformCategory, SubscriptionPlanSettings, PaymentTerms
+from apps.events.models import Event
+
 
 
 
@@ -54,6 +56,8 @@ def _events_using(filter_kwargs: dict, exclude_statuses=("cancelled",)) -> list:
     and are NOT in exclude_statuses.
     Used by every delete function below.
     """
+    from apps.events.models import Event   # ← add this line
+
     qs = Event.objects(**filter_kwargs)
     if exclude_statuses:
         qs = qs.filter(status__nin=list(exclude_statuses))
@@ -179,6 +183,7 @@ def delete_event_theme(request, theme_id):
             return api_response(False, "Theme not found", status=404)
 
         # -- Reference check --
+        from apps.events.models import Event
         in_use = _events_using({"theme": theme})
         if in_use:
             return api_response(
@@ -199,6 +204,7 @@ def delete_event_theme(request, theme_id):
 
     except Exception as e:
         return api_response(False, str(e), status=500)
+
 
 
 
@@ -454,6 +460,7 @@ def delete_uniform_category(request, category_id):
             return api_response(False, "Uniform category not found", status=404)
 
         # -- Reference check --
+        from apps.events.models import Event
         in_use = _events_using({"uniform": cat})
         if in_use:
             return api_response(

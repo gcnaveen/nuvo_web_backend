@@ -25,6 +25,7 @@ def _events_using(filter_kwargs: dict, exclude_statuses=("cancelled",)) -> list:
     and are NOT in exclude_statuses.
     Used by every delete function below.
     """
+    from apps.events.models import Event   # ← add this line
     qs = Event.objects(**filter_kwargs)
     if exclude_statuses:
         qs = qs.filter(status__nin=list(exclude_statuses))
@@ -1133,6 +1134,7 @@ def admin_delete_staff(request, staff_id):
             return api_response(False, "Staff member not found", status=404)
 
         # -- Reference check: only block on ACTIVE events --
+        from apps.events.models import Event
         # completed / cancelled events are fine — safe_deref handles orphaned refs
         in_use = _events_using(
             {"crew_members": profile},
@@ -1179,8 +1181,8 @@ def admin_delete_staff(request, staff_id):
     except Exception as e:
         return api_response(False, str(e), status=500)
 
-# Add to apps/users/views.py
 
+# Add to apps/users/views.py
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
@@ -1199,6 +1201,7 @@ def admin_delete_client(request, client_id):
             return api_response(False, "Client not found", status=404)
 
         # -- Reference check --
+        from apps.events.models import Event
         in_use = _events_using(
             {"client": profile},
             exclude_statuses=("cancelled", "completed"),
@@ -1233,16 +1236,6 @@ def admin_delete_client(request, client_id):
 
     except Exception as e:
         return api_response(False, str(e), status=500)
-
-
-def _s3_client():
-    kwargs = {"region_name": settings.AWS_S3_REGION_NAME}
-    if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
-        kwargs.update(
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        )
-    return boto3.client("s3", **kwargs)
 
 
 def _s3_delete(url: str):
