@@ -17,7 +17,7 @@ import boto3
 
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
-from .models import EventTheme, UniformCategory, SubscriptionPlanSettings, PaymentTerms
+from .models import EventTheme, UniformCategory, SubscriptionPlanSettings, PaymentTerms, CrewMember
 from apps.events.models import Event
 
 
@@ -805,6 +805,147 @@ def inventory_summary(request):
         return api_response(False, str(e), status=500)
 
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CREW MEMBERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+VALID_TIERS = ["BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND", ""]
+
+
+def _ser_crew(m):
+    return {
+        "id":         str(m.id),
+        "name":       m.name,
+        "image":      m.image or "",
+        "tier":       m.tier or "",
+        "order":      m.order if m.order is not None else 0,
+        "is_active":  m.is_active,
+        "created_at": str(m.created_at) if m.created_at else None,
+        "updated_at": str(m.updated_at) if m.updated_at else None,
+    }
+
+
+@csrf_exempt
+def list_crew_members_public(request):
+    """GET /master/crew/public/ — no auth, used by mobile app"""
+    if request.method != "GET":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        qs = CrewMember.objects(is_active=True).order_by("order", "name")
+        return api_response(True, "Crew members fetched", [_ser_crew(m) for m in qs])
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def list_crew_members(request):
+    """GET /master/crew/ — admin, returns all (active + inactive)"""
+    if request.method != "GET":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        qs = CrewMember.objects().order_by("order", "name")
+        return api_response(True, "Crew members fetched", [_ser_crew(m) for m in qs])
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def create_crew_member(request):
+    """POST /master/crew/create/ — multipart/form-data
+    Fields: name*(req), image*(file, req), tier, order, is_active"""
+    if request.method != "POST":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        name = request.POST.get("name", "").strip()
+        if not name:
+            return api_response(False, "name is required", status=400)
+
+        img_file = request.FILES.get("image")
+        if not img_file:
+            return api_response(False, "image file is required", status=400)
+
+        tier = request.POST.get("tier", "").strip().upper()
+        if tier and tier not in VALID_TIERS:
+            return api_response(False, f"tier must be one of: {', '.join(t for t in VALID_TIERS if t)}", status=400)
+
+        try:
+            order = float(request.POST.get("order", "0") or "0")
+        except ValueError:
+            return api_response(False, "order must be a number", status=400)
+
+        is_active = request.POST.get("is_active", "true").lower() != "false"
+
+        member = CrewMember(name=name, tier=tier, order=order, is_active=is_active, image="")
+        member.image = _s3_upload(img_file, "crew", str(member.id))
+        member.save()
+        return api_response(True, "Crew member created", _ser_crew(member), status=201)
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def update_crew_member(request, member_id):
+    """PUT /master/crew/<member_id>/update/ — multipart/form-data
+    Fields (all optional): name, image(file), tier, order, is_active"""
+    if request.method != "PUT":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        member = CrewMember.objects(id=member_id).first()
+        if not member:
+            return api_response(False, "Crew member not found", status=404)
+
+        if v := request.POST.get("name", "").strip():
+            member.name = v
+
+        if img_file := request.FILES.get("image"):
+            _s3_delete(member.image or "")
+            member.image = _s3_upload(img_file, "crew", str(member.id))
+
+        if "tier" in request.POST:
+            tier = request.POST["tier"].strip().upper()
+            if tier and tier not in VALID_TIERS:
+                return api_response(False, f"tier must be one of: {', '.join(t for t in VALID_TIERS if t)}", status=400)
+            member.tier = tier
+
+        if "order" in request.POST:
+            try:
+                member.order = float(request.POST["order"] or "0")
+            except ValueError:
+                return api_response(False, "order must be a number", status=400)
+
+        if "is_active" in request.POST:
+            member.is_active = request.POST["is_active"].lower() != "false"
+
+        member.save()
+        return api_response(True, "Crew member updated", _ser_crew(member))
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def delete_crew_member(request, member_id):
+    """DELETE /master/crew/<member_id>/delete/"""
+    if request.method != "DELETE":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        member = CrewMember.objects(id=member_id).first()
+        if not member:
+            return api_response(False, "Crew member not found", status=404)
+        _s3_delete(member.image or "")
+        member.delete()
+        return api_response(True, "Crew member deleted")
+    except Exception as e:
+        return api_response(False, str(e), status=500)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

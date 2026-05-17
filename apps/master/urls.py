@@ -26,6 +26,13 @@ urlpatterns = [
     path("inventory/<str:category_id>/stock/",      update_stock),
     path("inventory/<str:category_id>/adjust/",     adjust_in_use),
 
+    # ── Crew Members ──────────────────────────────────────────────
+    path("crew/public/",                             list_crew_members_public),   # no auth, mobile
+    path("crew/create/",                             create_crew_member),
+    path("crew/",                                    list_crew_members),
+    path("crew/<str:member_id>/update/",             update_crew_member),
+    path("crew/<str:member_id>/delete/",             delete_crew_member),
+
     # ── Subscription Plans ────────────────────────────────────────
     path("subscription/",                           list_subscription_plans),
     path("subscription/<str:plan_name>/update/",    update_subscription_plan),

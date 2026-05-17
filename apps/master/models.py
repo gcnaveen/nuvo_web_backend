@@ -79,7 +79,26 @@ class SubscriptionPlanSettings(Document):
         return super().save(*args, **kwargs)
 
 
-# 4️⃣ Payment Terms (Single Document)
+# 4️⃣ Crew Members
+class CrewMember(Document):
+    meta = {"collection": "crew_members"}
+
+    id         = StringField(primary_key=True, default=lambda: str(uuid.uuid4()))
+    name       = StringField(required=True)
+    image      = URLField(required=True)
+    tier       = StringField(default="")       # BRONZE | SILVER | GOLD | PLATINUM | DIAMOND
+    order      = FloatField(default=0)         # sort order in the gallery
+    is_active  = BooleanField(default=True)
+
+    created_at = DateTimeField(default=datetime.utcnow)
+    updated_at = DateTimeField(default=datetime.utcnow)
+
+    def save(self, *args, **kwargs):
+        self.updated_at = datetime.utcnow()
+        return super().save(*args, **kwargs)
+
+
+# 5️⃣ Payment Terms (Single Document)
 class PaymentTerms(Document):
     meta = {"collection": "payment_terms"}
 
