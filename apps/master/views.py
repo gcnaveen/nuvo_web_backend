@@ -17,7 +17,7 @@ import boto3
 
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
-from .models import EventTheme, UniformCategory, SubscriptionPlanSettings, PaymentTerms
+from .models import EventTheme, UniformCategory, SubscriptionPlanSettings, PaymentTerms, CrewMember, Coupon
 from apps.events.models import Event
 
 
@@ -808,6 +808,121 @@ def inventory_summary(request):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# CREW MEMBERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _ser_crew(m):
+    return {
+        "id":         str(m.id),
+        "name":       m.name,
+        "image":      m.image or "",
+        "is_active":  m.is_active,
+        "created_at": str(m.created_at) if m.created_at else None,
+        "updated_at": str(m.updated_at) if m.updated_at else None,
+    }
+
+
+@csrf_exempt
+def list_crew_members_public(request):
+    """GET /master/crew/public/ — no auth, used by mobile app"""
+    if request.method != "GET":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        qs = CrewMember.objects(is_active=True).order_by("name")
+        return api_response(True, "Crew members fetched", [_ser_crew(m) for m in qs])
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def list_crew_members(request):
+    """GET /master/crew/ — admin, returns all (active + inactive)"""
+    if request.method != "GET":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        qs = CrewMember.objects().order_by("name")
+        return api_response(True, "Crew members fetched", [_ser_crew(m) for m in qs])
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def create_crew_member(request):
+    """POST /master/crew/create/ — multipart/form-data
+    Fields: name*(req), image*(file, req), tier, order, is_active"""
+    if request.method != "POST":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        name = request.POST.get("name", "").strip()
+        if not name:
+            return api_response(False, "name is required", status=400)
+
+        img_file = request.FILES.get("image")
+        if not img_file:
+            return api_response(False, "image file is required", status=400)
+
+        is_active = request.POST.get("is_active", "true").lower() != "false"
+
+        image_url = upload_file_to_s3(img_file, "staff/crew")
+        member = CrewMember(name=name, is_active=is_active, image=image_url)
+        member.save()
+        return api_response(True, "Crew member created", _ser_crew(member), status=201)
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def update_crew_member(request, member_id):
+    """PUT /master/crew/<member_id>/update/ — multipart/form-data
+    Fields (all optional): name, image(file), tier, order, is_active"""
+    if request.method != "PUT":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        member = CrewMember.objects(id=member_id).first()
+        if not member:
+            return api_response(False, "Crew member not found", status=404)
+
+        if v := request.POST.get("name", "").strip():
+            member.name = v
+
+        if img_file := request.FILES.get("image"):
+            delete_file_from_s3(member.image or "")
+            member.image = upload_file_to_s3(img_file, "staff/crew")
+
+        if "is_active" in request.POST:
+            member.is_active = request.POST["is_active"].lower() != "false"
+
+        member.save()
+        return api_response(True, "Crew member updated", _ser_crew(member))
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def delete_crew_member(request, member_id):
+    """DELETE /master/crew/<member_id>/delete/"""
+    if request.method != "DELETE":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        member = CrewMember.objects(id=member_id).first()
+        if not member:
+            return api_response(False, "Crew member not found", status=404)
+        delete_file_from_s3(member.image or "")
+        member.delete()
+        return api_response(True, "Crew member deleted")
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 3. SUBSCRIPTION PLAN SETTINGS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -860,6 +975,21 @@ def update_subscription_plan(request, plan_name):
 # 4. PAYMENT TERMS
 # ══════════════════════════════════════════════════════════════════════════════
 
+STAFF_TIERS = ["BRONZE", "SILVER", "GOLD", "PLATINUM"]
+
+DEFAULT_STAFF_PRICING = {"BRONZE": 15000, "SILVER": 30000, "GOLD": 45000, "PLATINUM": 65000}
+
+
+def _ser_payment_terms(terms):
+    return {
+        "advancePercentage":     terms.advancePercentage,
+        "staff_pricing":         terms.staff_pricing or DEFAULT_STAFF_PRICING,
+        "default_hours_per_day": terms.default_hours_per_day if terms.default_hours_per_day is not None else 5.0,
+        "overtime_rate_per_hour": terms.overtime_rate_per_hour if terms.overtime_rate_per_hour is not None else 3000.0,
+        "lastUpdatedAt":         str(terms.lastUpdatedAt),
+    }
+
+
 @csrf_exempt
 @require_auth
 @require_role(["ADMIN"])
@@ -870,11 +1000,13 @@ def get_payment_terms(request):
     try:
         terms = PaymentTerms.objects().first()
         if not terms:
-            return api_response(True, "No payment terms set", {"advancePercentage": None})
-        return api_response(True, "Payment terms fetched", {
-            "advancePercentage": terms.advancePercentage,
-            "lastUpdatedAt": str(terms.lastUpdatedAt),
-        })
+            return api_response(True, "No payment terms set", {
+                "advancePercentage": None,
+                "staff_pricing": DEFAULT_STAFF_PRICING,
+                "default_hours_per_day": 5.0,
+                "overtime_rate_per_hour": 3000.0,
+            })
+        return api_response(True, "Payment terms fetched", _ser_payment_terms(terms))
     except Exception as e:
         return api_response(False, str(e), status=500)
 
@@ -883,24 +1015,225 @@ def get_payment_terms(request):
 @require_role(["ADMIN"])
 def update_payment_terms(request):
     """PUT /master/payment/update/
-    Body: { "advancePercentage": 30 }  — 0-100"""
+    Body: {
+        "advancePercentage": 30,
+        "staff_pricing": {"BRONZE": 15000, "SILVER": 30000, "GOLD": 45000, "PLATINUM": 65000},
+        "default_hours_per_day": 5,
+        "overtime_rate_per_hour": 3000
+    }"""
     if request.method != "PUT":
         return api_response(False, "Invalid method", status=405)
     try:
         body = json.loads(request.body)
-        pct  = body.get("advancePercentage")
-        if pct is None:
-            return api_response(False, "advancePercentage is required", status=400)
-        pct = float(pct)
-        if not (0 <= pct <= 100):
-            return api_response(False, "Must be 0-100", status=400)
-        terms = PaymentTerms.objects().first() or PaymentTerms(advancePercentage=pct)
-        terms.advancePercentage = pct
+
+        terms = PaymentTerms.objects().first()
+        if not terms:
+            terms = PaymentTerms(advancePercentage=0)
+
+        if "advancePercentage" in body:
+            pct = float(body["advancePercentage"])
+            if not (0 <= pct <= 100):
+                return api_response(False, "advancePercentage must be 0-100", status=400)
+            terms.advancePercentage = pct
+
+        if "staff_pricing" in body:
+            pricing = body["staff_pricing"]
+            if not isinstance(pricing, dict):
+                return api_response(False, "staff_pricing must be an object", status=400)
+            validated = {}
+            for tier in STAFF_TIERS:
+                if tier in pricing:
+                    try:
+                        validated[tier] = float(pricing[tier])
+                    except (ValueError, TypeError):
+                        return api_response(False, f"staff_pricing.{tier} must be a number", status=400)
+            terms.staff_pricing = {**(terms.staff_pricing or DEFAULT_STAFF_PRICING), **validated}
+
+        if "default_hours_per_day" in body:
+            h = float(body["default_hours_per_day"])
+            if h <= 0:
+                return api_response(False, "default_hours_per_day must be greater than 0", status=400)
+            terms.default_hours_per_day = h
+
+        if "overtime_rate_per_hour" in body:
+            terms.overtime_rate_per_hour = float(body["overtime_rate_per_hour"])
+
         terms.save()
-        return api_response(True, "Payment terms updated", {
-            "advancePercentage": terms.advancePercentage,
-            "lastUpdatedAt": str(terms.lastUpdatedAt),
-        })
+        return api_response(True, "Payment terms updated", _ser_payment_terms(terms))
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COUPONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+from datetime import timezone as tz
+
+
+def _ser_coupon(c):
+    return {
+        "id":             str(c.id),
+        "code":           c.code,
+        "description":    c.description or "",
+        "discount_type":  c.discount_type,
+        "discount_value": c.discount_value,
+        "usage_limit":    c.usage_limit,
+        "used_count":     c.used_count,
+        "is_active":      c.is_active,
+        "expiry_date":    str(c.expiry_date) if c.expiry_date else None,
+        "created_at":     str(c.created_at) if c.created_at else None,
+        "updated_at":     str(c.updated_at) if c.updated_at else None,
+    }
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def list_coupons(request):
+    """GET /master/coupons/"""
+    if request.method != "GET":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        qs = Coupon.objects().order_by("-created_at")
+        return api_response(True, "Coupons fetched", [_ser_coupon(c) for c in qs])
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def create_coupon(request):
+    """POST /master/coupons/create/
+    Body: { code, description, discount_type, discount_value, usage_limit, is_active, expiry_date }"""
+    if request.method != "POST":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        body = json.loads(request.body)
+
+        code = body.get("code", "").strip().upper()
+        if not code:
+            return api_response(False, "code is required", status=400)
+        if Coupon.objects(code=code).first():
+            return api_response(False, f"Coupon code '{code}' already exists", status=400)
+
+        discount_type = body.get("discount_type", "FLAT").strip().upper()
+        if discount_type not in ("FLAT", "PERCENTAGE"):
+            return api_response(False, "discount_type must be FLAT or PERCENTAGE", status=400)
+
+        discount_value = body.get("discount_value")
+        if discount_value is None:
+            return api_response(False, "discount_value is required", status=400)
+        discount_value = float(discount_value)
+        if discount_type == "PERCENTAGE" and not (0 < discount_value <= 100):
+            return api_response(False, "Percentage discount must be between 1 and 100", status=400)
+
+        expiry_date = None
+        if body.get("expiry_date"):
+            from dateutil import parser as dateparser
+            expiry_date = dateparser.parse(body["expiry_date"])
+
+        coupon = Coupon(
+            code=code,
+            description=body.get("description", "").strip(),
+            discount_type=discount_type,
+            discount_value=discount_value,
+            usage_limit=int(body.get("usage_limit", 1)),
+            is_active=bool(body.get("is_active", True)),
+            expiry_date=expiry_date,
+        )
+        coupon.save()
+        return api_response(True, "Coupon created", _ser_coupon(coupon), status=201)
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def update_coupon(request, coupon_id):
+    """PUT /master/coupons/<coupon_id>/update/"""
+    if request.method != "PUT":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        coupon = Coupon.objects(id=coupon_id).first()
+        if not coupon:
+            return api_response(False, "Coupon not found", status=404)
+
+        body = json.loads(request.body)
+
+        if "description" in body:
+            coupon.description = body["description"].strip()
+
+        if "discount_type" in body:
+            dt = body["discount_type"].strip().upper()
+            if dt not in ("FLAT", "PERCENTAGE"):
+                return api_response(False, "discount_type must be FLAT or PERCENTAGE", status=400)
+            coupon.discount_type = dt
+
+        if "discount_value" in body:
+            coupon.discount_value = float(body["discount_value"])
+
+        if "usage_limit" in body:
+            coupon.usage_limit = int(body["usage_limit"])
+
+        if "is_active" in body:
+            coupon.is_active = bool(body["is_active"])
+
+        if "expiry_date" in body:
+            if body["expiry_date"]:
+                from dateutil import parser as dateparser
+                coupon.expiry_date = dateparser.parse(body["expiry_date"])
+            else:
+                coupon.expiry_date = None
+
+        coupon.save()
+        return api_response(True, "Coupon updated", _ser_coupon(coupon))
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def delete_coupon(request, coupon_id):
+    """DELETE /master/coupons/<coupon_id>/delete/"""
+    if request.method != "DELETE":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        coupon = Coupon.objects(id=coupon_id).first()
+        if not coupon:
+            return api_response(False, "Coupon not found", status=404)
+        coupon.delete()
+        return api_response(True, "Coupon deleted")
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+def validate_coupon(request):
+    """POST /master/coupons/validate/ — no admin auth, called from mobile during checkout
+    Body: { "code": "SAVE10" }"""
+    if request.method != "POST":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        body = json.loads(request.body)
+        code = body.get("code", "").strip().upper()
+        if not code:
+            return api_response(False, "code is required", status=400)
+
+        coupon = Coupon.objects(code=code).first()
+        if not coupon:
+            return api_response(False, "Invalid coupon code", status=404)
+        if not coupon.is_active:
+            return api_response(False, "This coupon is no longer active", status=400)
+        if coupon.usage_limit > 0 and coupon.used_count >= coupon.usage_limit:
+            return api_response(False, "This coupon has reached its usage limit", status=400)
+        if coupon.expiry_date and coupon.expiry_date < datetime.utcnow():
+            return api_response(False, "This coupon has expired", status=400)
+
+        return api_response(True, "Coupon is valid", _ser_coupon(coupon))
     except Exception as e:
         return api_response(False, str(e), status=500)
 
