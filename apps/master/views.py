@@ -1212,9 +1212,83 @@ def delete_coupon(request, coupon_id):
 
 
 @csrf_exempt
+def get_payment_config_public(request):
+    """GET /master/payment/config/ — NO auth, public endpoint for mobile app.
+
+    Returns all pricing config the mobile app needs to calculate event costs:
+      - staff_pricing per tier
+      - default_hours_per_day
+      - overtime_rate_per_hour
+      - advancePercentage
+
+    Response:
+    {
+        "success": true,
+        "data": {
+            "advancePercentage": 30,
+            "staff_pricing": {
+                "BRONZE": 15000,
+                "SILVER": 30000,
+                "GOLD": 45000,
+                "PLATINUM": 65000
+            },
+            "default_hours_per_day": 5.0,
+            "overtime_rate_per_hour": 3000.0
+        }
+    }
+    """
+    if request.method != "GET":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        terms = PaymentTerms.objects().first()
+        if not terms:
+            # Return defaults if admin hasn't saved yet
+            return api_response(True, "Payment config fetched", {
+                "advancePercentage":      0,
+                "staff_pricing":          DEFAULT_STAFF_PRICING,
+                "default_hours_per_day":  5.0,
+                "overtime_rate_per_hour": 3000.0,
+            })
+        return api_response(True, "Payment config fetched", {
+            "advancePercentage":      terms.advancePercentage,
+            "staff_pricing":          terms.staff_pricing or DEFAULT_STAFF_PRICING,
+            "default_hours_per_day":  terms.default_hours_per_day  if terms.default_hours_per_day  is not None else 5.0,
+            "overtime_rate_per_hour": terms.overtime_rate_per_hour if terms.overtime_rate_per_hour is not None else 3000.0,
+        })
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
 def validate_coupon(request):
-    """POST /master/coupons/validate/ — no admin auth, called from mobile during checkout
-    Body: { "code": "SAVE10" }"""
+    """POST /master/coupons/validate/ — no auth, called from mobile during checkout.
+
+    Validates the coupon and returns its details so the frontend can
+    calculate the discount and show a remove option.
+    The actual used_count is only incremented when the event is confirmed.
+
+    Request body:  { "code": "SAVE20" }
+
+    Response:
+    {
+        "success": true,
+        "data": {
+            "code": "SAVE20",
+            "description": "20% off for new clients",
+            "discount_type": "PERCENTAGE",   // FLAT | PERCENTAGE
+            "discount_value": 20,
+            "usage_limit": 2,
+            "is_active": true
+        }
+    }
+
+    Frontend calculation:
+      PERCENTAGE → discount = (discount_value / 100) × total_amount
+      FLAT       → discount = discount_value  (fixed rupee deduction)
+      final_amount = total_amount - discount  (never below 0)
+
+    To remove the coupon: no API call needed — just clear it from frontend state.
+    """
     if request.method != "POST":
         return api_response(False, "Invalid method", status=405)
     try:
@@ -1233,7 +1307,95 @@ def validate_coupon(request):
         if coupon.expiry_date and coupon.expiry_date < datetime.utcnow():
             return api_response(False, "This coupon has expired", status=400)
 
-        return api_response(True, "Coupon is valid", _ser_coupon(coupon))
+        return api_response(True, "Coupon is valid", {
+            "code":           coupon.code,
+            "description":    coupon.description or "",
+            "discount_type":  coupon.discount_type,
+            "discount_value": coupon.discount_value,
+            "usage_limit":    coupon.usage_limit,
+            "is_active":      coupon.is_active,
+        })
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+def apply_coupon(request):
+    """POST /master/coupons/apply/ — NO auth, called from mobile at checkout.
+
+    Validates the coupon AND calculates the exact discount for the given total.
+
+    Request body:
+    {
+        "code": "SAVE20",
+        "total_amount": 75000
+    }
+
+    Response (success):
+    {
+        "success": true,
+        "data": {
+            "code": "SAVE20",
+            "discount_type": "PERCENTAGE",   // FLAT | PERCENTAGE
+            "discount_value": 20,
+            "discount_amount": 15000,         // actual rupees deducted
+            "original_amount": 75000,
+            "final_amount": 60000,
+            "description": "20% off for new clients"
+        }
+    }
+
+    How discount is calculated:
+      FLAT       → discount_amount = discount_value  (e.g. ₹5000 flat off)
+      PERCENTAGE → discount_amount = (discount_value / 100) * total_amount
+                   capped so final_amount never goes below 0
+    """
+    if request.method != "POST":
+        return api_response(False, "Invalid method", status=405)
+    try:
+        body = json.loads(request.body)
+        code         = body.get("code", "").strip().upper()
+        total_amount = body.get("total_amount")
+
+        if not code:
+            return api_response(False, "code is required", status=400)
+        if total_amount is None:
+            return api_response(False, "total_amount is required", status=400)
+
+        total_amount = float(total_amount)
+        if total_amount < 0:
+            return api_response(False, "total_amount must be >= 0", status=400)
+
+        # ── Validate coupon ────────────────────────────────────────
+        coupon = Coupon.objects(code=code).first()
+        if not coupon:
+            return api_response(False, "Invalid coupon code", status=404)
+        if not coupon.is_active:
+            return api_response(False, "This coupon is no longer active", status=400)
+        if coupon.usage_limit > 0 and coupon.used_count >= coupon.usage_limit:
+            return api_response(False, "This coupon has reached its usage limit", status=400)
+        if coupon.expiry_date and coupon.expiry_date < datetime.utcnow():
+            return api_response(False, "This coupon has expired", status=400)
+
+        # ── Calculate discount ─────────────────────────────────────
+        if coupon.discount_type == "PERCENTAGE":
+            discount_amount = round((coupon.discount_value / 100) * total_amount, 2)
+        else:  # FLAT
+            discount_amount = round(coupon.discount_value, 2)
+
+        # Ensure discount never exceeds the total
+        discount_amount = min(discount_amount, total_amount)
+        final_amount    = round(total_amount - discount_amount, 2)
+
+        return api_response(True, "Coupon applied successfully", {
+            "code":            coupon.code,
+            "description":     coupon.description or "",
+            "discount_type":   coupon.discount_type,
+            "discount_value":  coupon.discount_value,
+            "discount_amount": discount_amount,
+            "original_amount": total_amount,
+            "final_amount":    final_amount,
+        })
     except Exception as e:
         return api_response(False, str(e), status=500)
 

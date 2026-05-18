@@ -38,10 +38,12 @@ urlpatterns = [
     path("subscription/<str:plan_name>/update/",    update_subscription_plan),
 
     # ── Payment Terms ─────────────────────────────────────────────
+    path("payment/config/",                         get_payment_config_public),  # no auth, mobile
     path("payment/",                                get_payment_terms),
     path("payment/update/",                         update_payment_terms),
 
     # ── Coupons ───────────────────────────────────────────────────
+    path("coupons/apply/",                          apply_coupon),             # no auth, mobile
     path("coupons/validate/",                       validate_coupon),          # no auth, mobile
     path("coupons/create/",                         create_coupon),
     path("coupons/",                                list_coupons),
