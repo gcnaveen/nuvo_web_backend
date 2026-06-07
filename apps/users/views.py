@@ -5,10 +5,10 @@ from apps.accounts.decorators import require_auth, require_role
 import json
 from apps.users.models import User, ClientProfile, StaffProfile, MakeupArtistProfile
 
-import boto3
 import uuid
 import os
 from django.conf import settings
+from apps.common.s3_utils import upload_file_to_s3, delete_file_from_s3
 
 
 def api_response(success, message, data=None, status=200):
@@ -1162,10 +1162,9 @@ def admin_delete_staff(request, staff_id):
 
         # Clean up S3 assets
         try:
-            from apps.common.s3_utils import s3_delete as _s3_delete_user
-            _s3_delete_user(profile.profile_picture or "")
+            delete_file_from_s3(profile.profile_picture or "")
             for url in (profile.gallery_images or []):
-                _s3_delete_user(url)
+                delete_file_from_s3(url)
         except Exception:
             pass   # non-fatal — continue with delete
 
@@ -1241,29 +1240,14 @@ def admin_delete_client(request, client_id):
 def _s3_delete(url: str):
     """Delete a file from S3 given its full URL. Silently ignores errors."""
     try:
-        bucket = settings.AWS_STORAGE_BUCKET_NAME
-        # URL looks like: https://<bucket>.s3.<region>.amazonaws.com/<key>
-        # OR:              https://s3.<region>.amazonaws.com/<bucket>/<key>
-        key = url.split(f"{bucket}/")[-1]
-        _s3_client().delete_object(Bucket=bucket, Key=key)
+        delete_file_from_s3(url)
     except Exception:
         pass
 
 
 def _s3_upload(file_obj, folder: str, filename: str = None) -> str:
     """Upload a file to S3 and return its public URL."""
-    ext      = os.path.splitext(file_obj.name)[-1].lower() or ".jpg"
-    key      = f"{folder}/{filename or uuid.uuid4()}{ext}"
-    bucket   = settings.AWS_STORAGE_BUCKET_NAME
-    region   = settings.AWS_S3_REGION_NAME
-
-    _s3_client().upload_fileobj(
-        file_obj,
-        bucket,
-        key,
-        ExtraArgs={"ContentType": file_obj.content_type or "image/jpeg"},
-    )
-    return f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
+    return upload_file_to_s3(file_obj, folder)
 
 
 # ── 1. Admin Upload Staff Images ─────────────────────────────────────────────
@@ -1782,10 +1766,9 @@ def admin_delete_mua(request, mua_id):
             user = None
 
         try:
-            from apps.common.s3_utils import s3_delete as _s3_delete_mua
-            _s3_delete_mua(profile.profile_picture or "")
+            delete_file_from_s3(profile.profile_picture or "")
             for url in (profile.gallery_images or []):
-                _s3_delete_mua(url)
+                delete_file_from_s3(url)
         except Exception:
             pass
 
