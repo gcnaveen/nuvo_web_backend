@@ -23,6 +23,9 @@ env.bak/
 venv.bak/
 myenv/
 
+# Claude Code internals
+.claude/
+
 # IDEs / Text Editors
 .vscode/
 .idea/
