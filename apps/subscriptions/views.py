@@ -24,11 +24,16 @@ from datetime import datetime, timedelta
 
 from django.views.decorators.csrf import csrf_exempt
 
-from apps.accounts.decorators import require_auth, require_role
-from apps.common.utils import api_response
+from django.http import JsonResponse
+
+from apps.accounts.decorators import require_auth
 from apps.master.models import SubscriptionPlanSettings
 from apps.users.models import ClientProfile
 from .models import Subscription
+
+
+def api_response(success, message, data=None, status=200):
+    return JsonResponse({"success": success, "message": message, "data": data}, status=status)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -133,7 +138,7 @@ def initiate(request):
             return api_response(False, "redirect_url is required", status=400)
 
         # ── Caller identity ────────────────────────────────────
-        user_id = request.user_id   # set by JWTAuthenticationMiddleware
+        user_id = str(request.user.id)
         cp = ClientProfile.objects(user=user_id).first()
         if not cp:
             return api_response(False, "Client profile not found", status=404)
@@ -280,7 +285,7 @@ def my_subscription(request):
     if request.method != "GET":
         return api_response(False, "Method not allowed", status=405)
     try:
-        user_id = request.user_id
+        user_id = str(request.user.id)
         cp = ClientProfile.objects(user=user_id).first()
 
         # Latest completed subscription
