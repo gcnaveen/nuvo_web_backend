@@ -27,6 +27,7 @@ _INSTALLED_APPS = [
     "apps.common",
     "apps.master",
     "apps.events",
+    "apps.subscriptions",
 ]
 if not os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
     _INSTALLED_APPS.insert(_INSTALLED_APPS.index("corsheaders") + 1, "drf_yasg")
@@ -121,13 +122,13 @@ LOCATION_SERVER_TIMEOUT = 5   # seconds, optional
 
 # settings.py additions:
  
-# PhonePe (sandbox)
-PHONEPE_MERCHANT_ID  = os.environ.get("PHONEPE_MERCHANT_ID",  "PGTESTPAYUAT")
-PHONEPE_SALT_KEY     = os.environ.get("PHONEPE_SALT_KEY",     "")
-PHONEPE_SALT_INDEX   = os.environ.get("PHONEPE_SALT_INDEX",   "1")
-PHONEPE_BASE_URL     = os.environ.get("PHONEPE_BASE_URL",     "https://api-preprod.phonepe.com/apis/pg-sandbox")
-PHONEPE_REDIRECT_URL = os.environ.get("PHONEPE_REDIRECT_URL", "https://yourdomain.com/api/events/payment/callback/")
-PHONEPE_CALLBACK_URL = os.environ.get("PHONEPE_CALLBACK_URL", "https://yourdomain.com/api/events/payment/webhook/")
+# PhonePe v2 (OAuth 2.0)
+PHONEPE_CLIENT_ID        = os.environ.get("PHONEPE_CLIENT_ID",        "")
+PHONEPE_CLIENT_SECRET    = os.environ.get("PHONEPE_CLIENT_SECRET",    "")
+PHONEPE_CLIENT_VERSION   = int(os.environ.get("PHONEPE_CLIENT_VERSION", "1"))
+PHONEPE_ENV              = os.environ.get("PHONEPE_ENV",              "SANDBOX")   # SANDBOX | PRODUCTION
+PHONEPE_WEBHOOK_USERNAME = os.environ.get("PHONEPE_WEBHOOK_USERNAME", "")
+PHONEPE_WEBHOOK_PASSWORD = os.environ.get("PHONEPE_WEBHOOK_PASSWORD", "")
  
 # Location tracking C++ server
 LOCATION_SERVER_URL     = os.environ.get("LOCATION_SERVER_URL",     "http://localhost:9090")

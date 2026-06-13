@@ -786,6 +786,12 @@ def track_event(request, event_id):
 @csrf_exempt
 @require_auth
 def initiate_payment(request, event_id):
+    """
+    POST /api/events/<event_id>/payment/initiate/
+    Body: { "amount": 31500.0, "redirect_url": "nuvoapp://payment/result" }
+
+    Mobile app calls this → receives redirect_url → opens in WebView/browser.
+    """
     if request.method != "POST":
         return api_response(False, "Invalid request method", status=405)
     try:
@@ -794,70 +800,93 @@ def initiate_payment(request, event_id):
         return api_response(False, "Event not found", status=404)
     try:
         from apps.common.phonepay_utils import initiate_payment as phonepe_initiate
-        body   = json.loads(request.body)
-        amount = float(body.get("amount", 0))
+        import uuid as _uuid
+        body         = json.loads(request.body)
+        amount       = float(body.get("amount", 0))
+        redirect_url = body.get("redirect_url", "").strip()
+
         if amount <= 0:
             return api_response(False, "Amount must be greater than 0", status=400)
+        if not redirect_url:
+            return api_response(False, "redirect_url is required", status=400)
         if event.payment and event.payment.payment_status == "paid_fully":
             return api_response(False, "Event is already fully paid", status=400)
 
-        user_mobile = "9999999999"
+        # Build a unique merchant order ID (max 63 chars, alphanumeric + hyphen)
+        merchant_order_id = f"EVT-{str(event.id)[:8].upper()}-{_uuid.uuid4().hex[:8].upper()}"
+
+        # Get client's mobile number for PhonePe prefill (best effort)
+        user_mobile = None
         try:
             client_doc = safe_ref(event.client)
             if client_doc:
                 user_doc = safe_ref(client_doc.user)
-                if user_doc:
-                    user_mobile = user_doc.phone_number or user_mobile
+                if user_doc and user_doc.phone_number:
+                    user_mobile = user_doc.phone_number
         except Exception:
             pass
 
-        result = phonepe_initiate(amount_rupees=amount, event_id=str(event.id), user_mobile=user_mobile)
+        result = phonepe_initiate(
+            amount_rupees=amount,
+            merchant_order_id=merchant_order_id,
+            redirect_url=redirect_url,
+            user_mobile=user_mobile,
+        )
+
         if result.get("success"):
-            if event.payment:
-                event.payment.phonepay_order_id = result["merchant_txn_id"]
-                event.payment.last_updated      = datetime.utcnow()
+            event.payment.phonepay_order_id       = merchant_order_id
+            event.payment.phonepay_transaction_id = result.get("phonepe_order_id", "")
+            event.payment.total_amount            = amount
+            event.payment.last_updated            = datetime.utcnow()
             event.save()
+
         return api_response(result.get("success", False), result.get("message", ""), {
-            "payment_url":     result.get("payment_url"),
-            "merchant_txn_id": result.get("merchant_txn_id"),
+            "redirect_url":      result.get("redirect_url"),
+            "merchant_order_id": merchant_order_id,
         })
     except Exception as e:
         return api_response(False, str(e), status=500)
 
 
 # ─────────────────────────────────────────────────────────────
-#  10 & 11. Payment Callback / Webhook  (unchanged)
+#  10 & 11. Payment Callback / Webhook
 # ─────────────────────────────────────────────────────────────
 
 @csrf_exempt
 def payment_callback(request):
+    """
+    GET /api/events/payment/callback/?merchantOrderId=EVT-XXXX
+    PhonePe redirects the user's browser here after payment.
+    We verify status and update the event, then the mobile app
+    reads the final state from GET /api/events/<id>/.
+    """
     if request.method != "GET":
         return api_response(False, "Invalid request method", status=405)
     try:
-        from apps.common.phonepay_utils import verify_payment
-        txn_id = request.GET.get("txn", "").strip()
-        if not txn_id:
-            return api_response(False, "txn query param is required", status=400)
-        result = verify_payment(txn_id)
-        if not result.get("success"):
-            return api_response(False, result.get("message", "Payment verification failed"), status=400)
-        event = Event.objects(payment__phonepay_order_id=txn_id).first()
+        from apps.common.phonepay_utils import get_order_status
+        merchant_order_id = request.GET.get("merchantOrderId", "").strip()
+        if not merchant_order_id:
+            return api_response(False, "merchantOrderId query param is required", status=400)
+
+        result = get_order_status(merchant_order_id)
+        event  = Event.objects(payment__phonepay_order_id=merchant_order_id).first()
         if not event:
-            return api_response(False, "No event found for this transaction", status=404)
-        if result["status"] == "PAYMENT_SUCCESS":
+            return api_response(False, "No event found for this order", status=404)
+
+        if result.get("state") == "COMPLETED":
             paid     = result.get("amount_rupees", 0)
-            total    = event.payment.total_amount if event.payment else 0
+            total    = event.payment.total_amount or 0
             new_paid = (event.payment.paid_amount or 0) + paid
-            event.payment.paid_amount             = new_paid
-            event.payment.phonepay_transaction_id = txn_id
-            event.payment.last_updated            = datetime.utcnow()
-            event.payment.payment_status          = "paid_fully" if new_paid >= total else "advance"
+            event.payment.paid_amount    = new_paid
+            event.payment.last_updated   = datetime.utcnow()
+            event.payment.payment_status = "paid_fully" if new_paid >= total else "advance"
             event.save()
+
         return api_response(True, "Payment status updated", {
-            "phonepay_status": result["status"],
-            "event_id":        str(event.id),
-            "payment_status":  event.payment.payment_status,
-            "paid_amount":     event.payment.paid_amount,
+            "state":          result.get("state"),
+            "event_id":       str(event.id),
+            "payment_status": event.payment.payment_status,
+            "paid_amount":    event.payment.paid_amount,
         })
     except Exception as e:
         return api_response(False, str(e), status=500)
@@ -865,26 +894,37 @@ def payment_callback(request):
 
 @csrf_exempt
 def payment_webhook(request):
+    """
+    POST /api/events/payment/webhook/
+    PhonePe server-to-server notification.
+    This is the reliable path — always processed even if callback fails.
+    """
     if request.method != "POST":
         return api_response(False, "Invalid request method", status=405)
     try:
         from apps.common.phonepay_utils import parse_webhook_payload
-        result = parse_webhook_payload(request.body)
+        auth_header = request.headers.get("Authorization", "")
+        result      = parse_webhook_payload(request.body, auth_header)
+
         if not result.get("valid"):
             return api_response(False, result.get("message", "Invalid webhook"), status=400)
-        txn_id = result.get("merchant_txn_id")
-        event  = Event.objects(payment__phonepay_order_id=txn_id).first()
+
+        merchant_order_id = result.get("merchant_order_id")
+        event = Event.objects(payment__phonepay_order_id=merchant_order_id).first()
         if not event:
-            return api_response(True, "Acknowledged (event not found)")
-        if result["status"] == "PAYMENT_SUCCESS":
+            # Acknowledge anyway — PhonePe expects 200 or it retries
+            return api_response(True, "Acknowledged")
+
+        if result.get("state") == "COMPLETED":
             paid     = result.get("amount_rupees", 0)
-            total    = event.payment.total_amount if event.payment else 0
+            total    = event.payment.total_amount or 0
             new_paid = (event.payment.paid_amount or 0) + paid
             event.payment.paid_amount             = new_paid
-            event.payment.phonepay_transaction_id = txn_id
+            event.payment.phonepay_transaction_id = result.get("phonepe_order_id", "")
             event.payment.last_updated            = datetime.utcnow()
             event.payment.payment_status          = "paid_fully" if new_paid >= total else "advance"
             event.save()
+
         return api_response(True, "Webhook processed")
     except Exception as e:
         return api_response(False, str(e), status=500)

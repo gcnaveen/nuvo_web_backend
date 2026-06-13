@@ -1,78 +1,260 @@
 # apps/common/phonepay_utils.py
 """
-PhonePe Payment Gateway — Sandbox Utility
-Add to settings.py:
-  PHONEPE_MERCHANT_ID  = "PGTESTPAYUAT"
-  PHONEPE_SALT_KEY     = "<your-sandbox-salt>"
-  PHONEPE_SALT_INDEX   = "1"
-  PHONEPE_BASE_URL     = "https://api-preprod.phonepe.com/apis/pg-sandbox"
-  PHONEPE_REDIRECT_URL = "https://yourdomain.com/api/events/payment/callback/"
-  PHONEPE_CALLBACK_URL = "https://yourdomain.com/api/events/payment/webhook/"
+PhonePe Payment Gateway — v2 API Utility
+OAuth 2.0 (O-Bearer token) + direct REST calls via `requests`.
+No external PhonePe SDK required.
+
+Required env vars:
+  PHONEPE_CLIENT_ID        — from PhonePe merchant dashboard
+  PHONEPE_CLIENT_SECRET    — from PhonePe merchant dashboard
+  PHONEPE_CLIENT_VERSION   — usually 1
+  PHONEPE_ENV              — SANDBOX | PRODUCTION  (default: SANDBOX)
+  PHONEPE_WEBHOOK_USERNAME — set in PhonePe dashboard webhook config
+  PHONEPE_WEBHOOK_PASSWORD — set in PhonePe dashboard webhook config
 """
-import base64, hashlib, json, uuid, requests
+import hashlib, json, requests
+from datetime import datetime, timedelta
 from django.conf import settings
 
-def _cfg(k, d=""): return getattr(settings, k, d)
-def _mid():  return _cfg("PHONEPE_MERCHANT_ID",  "PGTESTPAYUAT")
-def _salt(): return _cfg("PHONEPE_SALT_KEY",     "")
-def _idx():  return _cfg("PHONEPE_SALT_INDEX",   "1")
-def _base(): return _cfg("PHONEPE_BASE_URL",     "https://api-preprod.phonepe.com/apis/pg-sandbox").rstrip("/")
-def _redir():return _cfg("PHONEPE_REDIRECT_URL", "http://localhost:3000/payment/callback")
-def _cb():   return _cfg("PHONEPE_CALLBACK_URL", "http://localhost:8000/api/events/payment/webhook/")
 
-def _sha256(s): return hashlib.sha256(s.encode()).hexdigest()
-def _checksum(b64, ep): return f"{_sha256(b64 + ep + _salt())}###{_idx()}"
+# ── Base URLs ──────────────────────────────────────────────────────────────────
+_SANDBOX_BASE    = "https://api-preprod.phonepe.com/apis/pg-sandbox"
+_PRODUCTION_BASE = "https://api.phonepe.com/apis/pg"
 
-def initiate_payment(amount_rupees, event_id, user_mobile="9999999999"):
-    txn_id = f"NUVO-{event_id[:8].upper()}-{uuid.uuid4().hex[:8].upper()}"
+
+def _base() -> str:
+    env = getattr(settings, "PHONEPE_ENV", "SANDBOX").upper()
+    return _PRODUCTION_BASE if env == "PRODUCTION" else _SANDBOX_BASE
+
+
+def _client_id()      -> str: return getattr(settings, "PHONEPE_CLIENT_ID",       "")
+def _client_secret()  -> str: return getattr(settings, "PHONEPE_CLIENT_SECRET",   "")
+def _client_version() -> int: return int(getattr(settings, "PHONEPE_CLIENT_VERSION", 1))
+def _webhook_user()   -> str: return getattr(settings, "PHONEPE_WEBHOOK_USERNAME", "")
+def _webhook_pass()   -> str: return getattr(settings, "PHONEPE_WEBHOOK_PASSWORD", "")
+
+
+# ── OAuth token cache (module-level — reused within the same Lambda warm start)
+_token_cache: dict = {"token": None, "expires_at": None}
+
+
+def _get_oauth_token() -> str:
+    """
+    Fetch an O-Bearer token using client credentials grant.
+    Result is cached in memory and auto-refreshed 60 s before expiry.
+    """
+    now = datetime.utcnow()
+    if (
+        _token_cache["token"]
+        and _token_cache["expires_at"]
+        and now < _token_cache["expires_at"]
+    ):
+        return _token_cache["token"]
+
+    env = getattr(settings, "PHONEPE_ENV", "SANDBOX").upper()
+    token_url = (
+        "https://api.phonepe.com/apis/identity-manager/v1/oauth/token"
+        if env == "PRODUCTION"
+        else f"{_SANDBOX_BASE}/v1/oauth/token"
+    )
+
+    resp = requests.post(
+        token_url,
+        data={
+            "client_id":      _client_id(),
+            "client_secret":  _client_secret(),
+            "client_version": _client_version(),
+            "grant_type":     "client_credentials",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    token = data["access_token"]
+    expires_at_epoch = data.get("expires_at")
+    expires_at = (
+        datetime.utcfromtimestamp(expires_at_epoch) - timedelta(seconds=60)
+        if expires_at_epoch
+        else now + timedelta(hours=1)
+    )
+
+    _token_cache["token"]      = token
+    _token_cache["expires_at"] = expires_at
+    return token
+
+
+def _auth_header() -> str:
+    return f"O-Bearer {_get_oauth_token()}"
+
+
+# ── 1. Initiate Payment ────────────────────────────────────────────────────────
+
+def initiate_payment(
+    amount_rupees: float,
+    merchant_order_id: str,
+    redirect_url: str,
+    user_mobile: str = None,
+) -> dict:
+    """
+    Initiate a PhonePe v2 checkout payment.
+
+    Args:
+        amount_rupees:      Amount in INR (converted to paisa internally).
+        merchant_order_id:  Unique ID from your system (max 63 chars,
+                            only letters/digits/hyphen/underscore).
+        redirect_url:       URL PhonePe redirects user to after payment.
+                            For mobile: a deep link e.g. "nuvoapp://payment/result"
+        user_mobile:        Optional — prefills user's mobile on PhonePe page.
+
+    Returns dict:
+        success           bool
+        message           str
+        redirect_url      str | None  ← open this in the mobile app / WebView
+        phonepe_order_id  str | None  ← PhonePe's internal orderId
+        merchant_order_id str         ← echo of input, used for status checks
+    """
     payload = {
-        "merchantId": _mid(), "merchantTransactionId": txn_id,
-        "merchantUserId": f"MUID-{event_id[:12]}",
-        "amount": int(round(amount_rupees * 100)),
-        "redirectUrl": f"{_redir()}?txn={txn_id}",
-        "redirectMode": "REDIRECT", "callbackUrl": _cb(),
-        "mobileNumber": user_mobile,
-        "paymentInstrument": {"type": "PAY_PAGE"},
+        "merchantOrderId": merchant_order_id,
+        "amount":          int(round(amount_rupees * 100)),
+        "expireAfter":     1800,    # 30 minutes
+        "paymentFlow": {
+            "type": "PG_CHECKOUT",
+            "merchantUrls": {"redirectUrl": redirect_url},
+        },
     }
-    b64 = base64.b64encode(json.dumps(payload).encode()).decode()
-    ep  = "/pg/v1/pay"
-    try:
-        r = requests.post(f"{_base()}{ep}", json={"request": b64},
-            headers={"Content-Type":"application/json","X-VERIFY":_checksum(b64,ep),"X-MERCHANT-ID":_mid()}, timeout=15)
-        d = r.json()
-        if r.status_code == 200 and d.get("success"):
-            url = d.get("data",{}).get("instrumentResponse",{}).get("redirectInfo",{}).get("url")
-            return {"success":True,"message":"Payment initiated","payment_url":url,"merchant_txn_id":txn_id}
-        return {"success":False,"message":d.get("message","PhonePe initiation failed"),"payment_url":None,"merchant_txn_id":txn_id}
-    except Exception as e:
-        return {"success":False,"message":str(e),"payment_url":None,"merchant_txn_id":txn_id}
+    if user_mobile:
+        payload["prefillUserLoginDetails"] = {"phoneNumber": str(user_mobile)}
 
-def verify_payment(merchant_txn_id):
-    ep = f"/pg/v1/status/{_mid()}/{merchant_txn_id}"
-    cs = f"{_sha256(ep + _salt())}###{_idx()}"
     try:
-        r = requests.get(f"{_base()}{ep}",
-            headers={"Content-Type":"application/json","X-VERIFY":cs,"X-MERCHANT-ID":_mid()}, timeout=15)
-        d = r.json()
-        if r.status_code == 200 and d.get("success"):
-            return {"success":True,"status":d.get("data",{}).get("state",""),
-                    "amount_rupees":round(d.get("data",{}).get("amount",0)/100,2),"message":d.get("message","")}
-        return {"success":False,"status":"PAYMENT_ERROR","amount_rupees":0,"message":d.get("message","")}
+        resp = requests.post(
+            f"{_base()}/checkout/v2/pay",
+            json=payload,
+            headers={
+                "Content-Type":  "application/json",
+                "Authorization": _auth_header(),
+            },
+            timeout=15,
+        )
+        data = resp.json()
+        if resp.status_code == 200:
+            return {
+                "success":           True,
+                "message":           "Payment initiated",
+                "redirect_url":      data.get("redirectUrl"),
+                "phonepe_order_id":  data.get("orderId"),
+                "merchant_order_id": merchant_order_id,
+            }
+        return {
+            "success":           False,
+            "message":           data.get("message", f"PhonePe error {resp.status_code}"),
+            "redirect_url":      None,
+            "phonepe_order_id":  None,
+            "merchant_order_id": merchant_order_id,
+        }
     except Exception as e:
-        return {"success":False,"status":"PAYMENT_ERROR","amount_rupees":0,"message":str(e)}
+        return {
+            "success": False, "message": str(e),
+            "redirect_url": None, "phonepe_order_id": None,
+            "merchant_order_id": merchant_order_id,
+        }
 
-def parse_webhook_payload(raw_body):
+
+# ── 2. Get Order Status ────────────────────────────────────────────────────────
+
+def get_order_status(merchant_order_id: str) -> dict:
+    """
+    Check the current status of a payment order.
+
+    Returns dict:
+        success       bool
+        state         "PENDING" | "COMPLETED" | "FAILED"
+        amount_rupees float
+        message       str
+    """
     try:
-        body = json.loads(raw_body)
-        b64  = body.get("response","")
-        rcv  = body.get("X-VERIFY", body.get("x-verify",""))
-        ep   = f"/pg/v1/status/{_mid()}"
-        if f"{_sha256(b64 + ep + _salt())}###{_idx()}" != rcv:
-            return {"valid":False,"message":"Checksum mismatch"}
-        dec  = json.loads(base64.b64decode(b64).decode())
-        pd   = dec.get("data",{})
-        return {"valid":True,"status":pd.get("state","UNKNOWN"),
-                "merchant_txn_id":pd.get("merchantTransactionId",""),
-                "amount_rupees":round(pd.get("amount",0)/100,2),"message":dec.get("message","")}
+        resp = requests.get(
+            f"{_base()}/checkout/v2/order/{merchant_order_id}/status",
+            headers={
+                "Content-Type":  "application/json",
+                "Authorization": _auth_header(),
+            },
+            timeout=15,
+        )
+        data = resp.json()
+        if resp.status_code == 200:
+            return {
+                "success":       True,
+                "state":         data.get("state", "PENDING"),
+                "amount_rupees": round(data.get("amount", 0) / 100, 2),
+                "phonepe_order_id": data.get("orderId", ""),
+                "message":       "Status fetched",
+            }
+        return {
+            "success": False, "state": "FAILED", "amount_rupees": 0,
+            "message": data.get("message", f"PhonePe error {resp.status_code}"),
+        }
     except Exception as e:
-        return {"valid":False,"message":str(e)}
+        return {"success": False, "state": "FAILED", "amount_rupees": 0, "message": str(e)}
+
+
+# ── 3. Webhook Verification & Parsing ─────────────────────────────────────────
+
+def verify_webhook_signature(authorization_header: str) -> bool:
+    """
+    PhonePe sends: Authorization: SHA256(<username>:<password>)
+    Verify it matches our configured credentials.
+    """
+    if not authorization_header:
+        return False
+    expected = "SHA256(" + hashlib.sha256(
+        f"{_webhook_user()}:{_webhook_pass()}".encode()
+    ).hexdigest() + ")"
+    return authorization_header.strip() == expected
+
+
+def parse_webhook_payload(body: bytes, authorization_header: str) -> dict:
+    """
+    Parse and validate a PhonePe v2 webhook POST.
+
+    PhonePe webhook payload shape:
+    {
+        "event":   "checkout.order.completed" | "checkout.order.failed" | ...,
+        "payload": {
+            "merchantOrderId": "...",
+            "orderId":         "...",
+            "amount":          <paisa>,
+            "state":           "COMPLETED" | "FAILED",
+            ...
+        }
+    }
+
+    Returns dict:
+        valid             bool
+        event             str
+        merchant_order_id str
+        phonepe_order_id  str
+        state             "COMPLETED" | "FAILED"
+        amount_rupees     float
+        message           str
+    """
+    if not verify_webhook_signature(authorization_header):
+        return {"valid": False, "message": "Webhook signature verification failed"}
+
+    try:
+        data    = json.loads(body)
+        event   = data.get("event", "")
+        payload = data.get("payload", {})
+        state   = "COMPLETED" if event == "checkout.order.completed" else "FAILED"
+        return {
+            "valid":             True,
+            "event":             event,
+            "merchant_order_id": payload.get("merchantOrderId", ""),
+            "phonepe_order_id":  payload.get("orderId", ""),
+            "state":             state,
+            "amount_rupees":     round(payload.get("amount", 0) / 100, 2),
+            "message":           event,
+        }
+    except Exception as e:
+        return {"valid": False, "message": str(e)}

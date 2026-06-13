@@ -198,3 +198,208 @@ setCoupon(null)   // clear applied coupon
 ```
 
 **Important:** `used_count` is **not incremented** on validate. It must be incremented only when the event booking is **confirmed**. This will be handled in the event booking API — coordinate with the backend team.
+
+---
+
+## 4. Event Booking Payment (PhonePe v2)
+
+Pay for an event booking (advance or balance). PhonePe v2 OAuth-based checkout.
+
+### 4a. Initiate Payment
+
+```
+POST /api/events/<event_id>/payment/initiate/
+Authorization: Bearer <jwt_token>
+Content-Type: application/json
+```
+
+**Request Body**
+```json
+{
+  "amount":       31500.00,
+  "redirect_url": "nuvoapp://payment/result"
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `amount` | ✅ | Amount in INR (e.g. `31500.00` for ₹31,500). Usually the advance amount. |
+| `redirect_url` | ✅ | Deep link or URL where PhonePe redirects the user after checkout. |
+
+**Success Response `200`**
+```json
+{
+  "success": true,
+  "message": "Payment initiated",
+  "data": {
+    "redirect_url":      "https://mercury.phonepe.com/transact/pay?token=...",
+    "merchant_order_id": "EVT-ABCD1234-XY123456"
+  }
+}
+```
+
+**Flow:**
+1. Open `redirect_url` in an in-app browser / WebView
+2. User completes payment on PhonePe
+3. PhonePe redirects to your `redirect_url` deep link
+4. On return, call `GET /api/events/<id>/` to check updated `payment.payment_status`
+
+### 4b. Payment Callback
+
+```
+GET /api/events/payment/callback/?merchantOrderId=EVT-ABCD1234-XY123456
+```
+
+PhonePe redirects here after checkout (server-side). You don't need to call this yourself — PhonePe hits it automatically. It updates the event payment status.
+
+**Response**
+```json
+{
+  "success": true,
+  "data": {
+    "state":          "COMPLETED",
+    "event_id":       "...",
+    "payment_status": "paid_fully",
+    "paid_amount":    31500.0
+  }
+}
+```
+
+`payment_status` values: `"advance"` | `"paid_fully"`
+
+---
+
+## 5. Subscription Plans & Payment (PhonePe v2)
+
+### 5a. List Plans
+
+```
+GET /api/subscriptions/plans/
+```
+
+No auth required.
+
+**Response**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id":              "uuid",
+      "name":            "GOLD",
+      "monthlyPrice":    999.0,
+      "yearlyPrice":     9999.0,
+      "prioritySupport": false,
+      "isFree":          false
+    },
+    {
+      "name": "PLATINUM",
+      "monthlyPrice": 1999.0,
+      "yearlyPrice":  19999.0,
+      "prioritySupport": true,
+      "isFree": false
+    },
+    {
+      "name": "DIAMOND",
+      "monthlyPrice": 2999.0,
+      "yearlyPrice":  29999.0,
+      "prioritySupport": true,
+      "isFree": false
+    }
+  ]
+}
+```
+
+### 5b. Initiate Subscription Payment
+
+```
+POST /api/subscriptions/initiate/
+Authorization: Bearer <jwt_token>
+Content-Type: application/json
+```
+
+**Request Body**
+```json
+{
+  "plan":          "GOLD",
+  "billing_cycle": "monthly",
+  "redirect_url":  "nuvoapp://subscription/result"
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `plan` | ✅ | `GOLD` \| `PLATINUM` \| `DIAMOND` |
+| `billing_cycle` | ✅ | `monthly` \| `yearly` |
+| `redirect_url` | ✅ | Deep link PhonePe redirects to after checkout |
+
+**Success Response `200`**
+```json
+{
+  "success": true,
+  "data": {
+    "redirect_url":      "https://mercury.phonepe.com/transact/pay?token=...",
+    "merchant_order_id": "SUB-XXXXXXXXXXXXXXXX"
+  }
+}
+```
+
+**Flow:**
+1. Call `GET /api/subscriptions/plans/` to display prices
+2. User picks plan + billing cycle → call `POST /api/subscriptions/initiate/`
+3. Open `redirect_url` in WebView
+4. PhonePe redirects to your `redirect_url` deep link on finish
+5. Call `GET /api/subscriptions/my/` to confirm the plan is now active
+
+### 5c. My Subscription
+
+```
+GET /api/subscriptions/my/
+Authorization: Bearer <jwt_token>
+```
+
+**Response**
+```json
+{
+  "success": true,
+  "data": {
+    "current_plan":  "GOLD",
+    "is_active":     true,
+    "plan":          "GOLD",
+    "billing_cycle": "monthly",
+    "amount":        999.0,
+    "start_date":    "2026-06-13T10:30:00",
+    "end_date":      "2026-07-13T10:30:00"
+  }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `current_plan` | The plan stored on the client profile (`SILVER` if no paid plan) |
+| `is_active` | `true` if the latest subscription's `end_date` is in the future |
+| `end_date` | Monthly = 30 days, Yearly = 365 days from payment |
+
+If the user has never subscribed:
+```json
+{
+  "success": true,
+  "data": {
+    "current_plan": "SILVER",
+    "is_active":    false,
+    "plan":         null,
+    "billing_cycle": null,
+    "amount":       null,
+    "start_date":   null,
+    "end_date":     null
+  }
+}
+```
+
+### 5d. Webhook (do not call — PhonePe only)
+
+```
+POST /api/subscriptions/webhook/
+```
+
+This endpoint is called by PhonePe's servers, not by the app. Configure it in your PhonePe merchant dashboard → Webhook URL. It is the reliable path — updates subscription even if the app was backgrounded during checkout.
