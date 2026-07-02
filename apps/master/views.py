@@ -80,7 +80,7 @@ def api_response(success, message, data=None, status=200):
     return JsonResponse({
         "success": success,
         "message": message,
-        "data": data or {}
+        "data": data if data is not None else {}
     }, status=status)
 
 # 1. EVENT THEMES
@@ -968,6 +968,71 @@ def update_subscription_plan(request, plan_name):
         if "isFree"          in body: plan.isFree          = bool(body["isFree"])
         plan.save()
         return api_response(True, f"{plan.name} plan updated", _ser_plan(plan))
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 3b. CREW PACKAGES  (Luxury / Premium)
+# ══════════════════════════════════════════════════════════════════════════════
+
+from .models import CrewPackage
+
+_PACKAGE_TYPES = {"LUXURY", "PREMIUM"}
+
+
+def _ser_crew_package(p) -> dict:
+    return {
+        "id":               str(p.id),
+        "type":             p.type,
+        "price_per_person": p.price_per_person,
+        "standard_hours":   p.standard_hours,
+        "extra_hour_rate":  p.extra_hour_rate,
+        "last_updated":     str(p.last_updated),
+    }
+
+
+@csrf_exempt
+def list_crew_packages(request):
+    """
+    GET /api/master/packages/
+    Returns both crew packages (LUXURY + PREMIUM).
+    No auth — mobile uses this to display pricing.
+    """
+    if request.method != "GET":
+        return api_response(False, "Method not allowed", status=405)
+    try:
+        packages = CrewPackage.objects().order_by("type")
+        return api_response(True, "Crew packages fetched", [_ser_crew_package(p) for p in packages])
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+@csrf_exempt
+@require_auth
+@require_role(["ADMIN"])
+def upsert_crew_package(request, package_type):
+    """
+    PUT /api/master/packages/<package_type>/
+    Body: { "price_per_person": 20000, "standard_hours": 8 }
+    Creates LUXURY or PREMIUM document if it doesn't exist yet.
+    """
+    if request.method != "PUT":
+        return api_response(False, "Method not allowed", status=405)
+    package_type = package_type.upper()
+    if package_type not in _PACKAGE_TYPES:
+        return api_response(False, f"package_type must be one of {_PACKAGE_TYPES}", status=400)
+    try:
+        body = json.loads(request.body)
+        pkg  = CrewPackage.objects(type=package_type).first()
+        if not pkg:
+            pkg = CrewPackage(type=package_type)
+        if "price_per_person" in body:
+            pkg.price_per_person = float(body["price_per_person"])
+        if "standard_hours" in body:
+            pkg.standard_hours = int(body["standard_hours"])
+        pkg.save()
+        return api_response(True, f"{package_type} package updated", _ser_crew_package(pkg))
     except Exception as e:
         return api_response(False, str(e), status=500)
 

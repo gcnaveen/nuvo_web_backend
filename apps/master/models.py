@@ -61,7 +61,34 @@ class UniformCategory(Document):
         self.updated_at = datetime.utcnow()
         return super().save(*args, **kwargs)
 
-# 3️⃣ Subscription Plan Settings
+# 3️⃣ Crew Package Settings (Luxury / Premium)
+class CrewPackage(Document):
+    """
+    Admin-configurable pricing for Luxury and Premium crew packages.
+    Only two documents exist: type=LUXURY and type=PREMIUM.
+    extra_hour_rate is auto-derived as price_per_person / standard_hours.
+    """
+    meta = {"collection": "crew_packages"}
+
+    id               = StringField(primary_key=True, default=lambda: str(uuid.uuid4()))
+    type             = StringField(required=True, unique=True)  # LUXURY | PREMIUM
+    price_per_person = FloatField(default=0)                    # INR per person
+    standard_hours   = IntField(default=8)                      # included hours per shift
+
+    last_updated = DateTimeField(default=datetime.utcnow)
+
+    @property
+    def extra_hour_rate(self) -> float:
+        if self.standard_hours and self.standard_hours > 0:
+            return round(self.price_per_person / self.standard_hours, 2)
+        return 0.0
+
+    def save(self, *args, **kwargs):
+        self.last_updated = datetime.utcnow()
+        return super().save(*args, **kwargs)
+
+
+# 3b️⃣ Subscription Plan Settings (kept for reference — subscriptions removed from product)
 class SubscriptionPlanSettings(Document):
     meta = {"collection": "subscription_plan_settings"}
 

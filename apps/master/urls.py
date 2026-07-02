@@ -33,9 +33,9 @@ urlpatterns = [
     path("crew/<str:member_id>/update/",             update_crew_member),
     path("crew/<str:member_id>/delete/",             delete_crew_member),
 
-    # ── Subscription Plans ────────────────────────────────────────
-    path("subscription/",                           list_subscription_plans),
-    path("subscription/<str:plan_name>/update/",    update_subscription_plan),
+    # ── Crew Packages (Luxury / Premium) ─────────────────────────
+    path("packages/",                              list_crew_packages),          # public, no auth
+    path("packages/<str:package_type>/",           upsert_crew_package),         # admin PUT
 
     # ── Payment Terms ─────────────────────────────────────────────
     path("payment/config/",                         get_payment_config_public),  # no auth, mobile

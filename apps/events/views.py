@@ -212,6 +212,42 @@ def parse_datetime(value: str, field_name: str):
     return None, f"{field_name} must be ISO format e.g. 2026-03-15T18:00:00"
 
 
+def _calculate_event_total(
+    package_type: str,
+    luxury_count: int,
+    premium_count: int,
+    working_hours: float,
+) -> float:
+    """
+    Compute the base event total from CrewPackage pricing.
+    Extra hours beyond standard_hours are billed at extra_hour_rate per person.
+    Returns 0.0 if no package_type or package not configured yet.
+    """
+    from apps.master.models import CrewPackage
+
+    total = 0.0
+    if not package_type:
+        return total
+
+    def _pkg_cost(pkg_type: str, count: int) -> float:
+        if count <= 0:
+            return 0.0
+        pkg = CrewPackage.objects(type=pkg_type).first()
+        if not pkg or pkg.price_per_person <= 0:
+            return 0.0
+        base        = pkg.price_per_person * count
+        std_hours   = pkg.standard_hours or 8
+        extra_hours = max(0.0, working_hours - std_hours)
+        overtime    = extra_hours * pkg.extra_hour_rate * count
+        return base + overtime
+
+    if package_type in ("LUXURY", "BOTH"):
+        total += _pkg_cost("LUXURY", luxury_count)
+    if package_type in ("PREMIUM", "BOTH"):
+        total += _pkg_cost("PREMIUM", premium_count)
+    return round(total, 2)
+
+
 # ─────────────────────────────────────────────────────────────
 #  1. Create Event
 # ─────────────────────────────────────────────────────────────
@@ -225,7 +261,7 @@ def create_event(request):
     try:
         body = json.loads(request.body)
         from apps.users.models import StaffProfile, ClientProfile
-        from apps.master.models import EventTheme, UniformCategory, SubscriptionPlanSettings
+        from apps.master.models import EventTheme, UniformCategory, CrewPackage
 
         event_name = body.get("event_name", "").strip()
         city       = body.get("city", "").strip()
@@ -261,9 +297,35 @@ def create_event(request):
         if not client:
             return api_response(False, "Client profile not found", status=404)
 
-        theme   = EventTheme.objects(id=body["theme_id"]).first()                   if body.get("theme_id")   else None
-        uniform = UniformCategory.objects(id=body["uniform_id"]).first()             if body.get("uniform_id") else None
-        package = SubscriptionPlanSettings.objects(id=body["package_id"]).first()   if body.get("package_id") else None
+        theme   = EventTheme.objects(id=body["theme_id"]).first()      if body.get("theme_id")   else None
+        uniform = UniformCategory.objects(id=body["uniform_id"]).first() if body.get("uniform_id") else None
+
+        # ── Package selection (Luxury / Premium / Both) ──────────
+        package_type       = body.get("package_type", "").strip().upper() or None
+        luxury_crew_count  = int(body.get("luxury_crew_count", 0))
+        premium_crew_count = int(body.get("premium_crew_count", 0))
+
+        if package_type and package_type not in ("LUXURY", "PREMIUM", "BOTH"):
+            return api_response(False, "package_type must be LUXURY, PREMIUM, or BOTH", status=400)
+
+        # ── Payment total auto-calculation from package pricing ──
+        working_hours = float(body["working_hours"]) if body.get("working_hours") else 8.0
+        total_amount  = _calculate_event_total(
+            package_type, luxury_crew_count, premium_crew_count, working_hours
+        )
+
+        # ── Payment collection rule ──────────────────────────────
+        days_to_event   = (start_dt - datetime.utcnow()).days
+        payment_method  = body.get("payment_method", "ONLINE").upper()
+        advance_type    = body.get("advance_type", "FULL").upper()
+
+        if days_to_event <= 7:
+            advance_type = "FULL"   # force full payment if event is within 7 days
+
+        balance_due_date = None
+        if advance_type == "HALF":
+            from datetime import timedelta
+            balance_due_date = start_dt - timedelta(days=7)
 
         crew_members = []
         for pid in body.get("crew_member_ids", []):
@@ -279,12 +341,17 @@ def create_event(request):
                 gst_number   = gst_data.get("gst_number"),
             )
 
-        pay_data = body.get("payment", {})
-        payment  = PaymentInfo(
-            total_amount = float(pay_data.get("total_amount", 0)),
-            gst_amount   = float(pay_data.get("gst_amount", 0)),
-            tax_amount   = float(pay_data.get("tax_amount", 0)),
-            paid_amount  = 0,
+        pay_data    = body.get("payment", {})
+        gst_amount  = float(pay_data.get("gst_amount", 0))
+        tax_amount  = float(pay_data.get("tax_amount", 0))
+        payment = PaymentInfo(
+            total_amount     = total_amount + gst_amount + tax_amount,
+            gst_amount       = gst_amount,
+            tax_amount       = tax_amount,
+            paid_amount      = 0,
+            payment_method   = payment_method if payment_method in ("CASH", "ONLINE") else "ONLINE",
+            advance_type     = advance_type if advance_type in ("FULL", "HALF") else "FULL",
+            balance_due_date = balance_due_date,
         )
 
         event = Event(
@@ -296,12 +363,13 @@ def create_event(request):
             event_start_datetime = start_dt,
             event_end_datetime   = end_dt,
             no_of_days           = int(body.get("no_of_days", 1)),
-            working_hours        = float(body["working_hours"]) if body.get("working_hours") else None,
-            crew_count           = int(body.get("crew_count", 0)),
+            working_hours        = working_hours,
             crew_members         = crew_members,
+            package_type         = package_type,
+            luxury_crew_count    = luxury_crew_count,
+            premium_crew_count   = premium_crew_count,
             theme                = theme,
             uniform              = uniform,
-            package              = package,
             client               = client,
             gst_details          = gst,
             payment              = payment,
@@ -417,7 +485,7 @@ def update_event(request, event_id):
     try:
         body = json.loads(request.body)
         from apps.users.models import StaffProfile, ClientProfile
-        from apps.master.models import EventTheme, UniformCategory, SubscriptionPlanSettings
+        from apps.master.models import EventTheme, UniformCategory
 
         if body.get("event_name"):    event.event_name  = body["event_name"].strip()
         if body.get("event_type"):    event.event_type  = body["event_type"]
@@ -425,7 +493,6 @@ def update_event(request, event_id):
         if body.get("state"):         event.state       = body["state"]
         if body.get("no_of_days")    is not None: event.no_of_days    = int(body["no_of_days"])
         if body.get("working_hours") is not None: event.working_hours = float(body["working_hours"])
-        if body.get("crew_count")    is not None: event.crew_count    = int(body["crew_count"])
 
         if body.get("event_start_datetime"):
             dt, err = parse_datetime(body["event_start_datetime"], "event_start_datetime")
@@ -449,7 +516,26 @@ def update_event(request, event_id):
 
         if body.get("theme_id"):   event.theme   = EventTheme.objects(id=body["theme_id"]).first()
         if body.get("uniform_id"): event.uniform = UniformCategory.objects(id=body["uniform_id"]).first()
-        if body.get("package_id"): event.package = SubscriptionPlanSettings.objects(id=body["package_id"]).first()
+
+        # ── Package update ─────────────────────────────────────
+        if body.get("package_type"):
+            pt = body["package_type"].upper()
+            if pt not in ("LUXURY", "PREMIUM", "BOTH"):
+                return api_response(False, "package_type must be LUXURY, PREMIUM, or BOTH", status=400)
+            event.package_type = pt
+        if body.get("luxury_crew_count")  is not None:
+            event.luxury_crew_count  = int(body["luxury_crew_count"])
+        if body.get("premium_crew_count") is not None:
+            event.premium_crew_count = int(body["premium_crew_count"])
+
+        # Recalculate total if package or hours changed
+        if any(k in body for k in ("package_type", "luxury_crew_count", "premium_crew_count", "working_hours")):
+            wh = event.working_hours or 8.0
+            new_total = _calculate_event_total(
+                event.package_type, event.luxury_crew_count, event.premium_crew_count, wh
+            )
+            if event.payment:
+                event.payment.total_amount = new_total + (event.payment.gst_amount or 0) + (event.payment.tax_amount or 0)
 
         if "crew_member_ids" in body:
             crew = []
@@ -457,7 +543,6 @@ def update_event(request, event_id):
                 p = StaffProfile.objects(id=pid).first()
                 if p: crew.append(p)
             event.crew_members = crew
-            event.crew_count   = len(crew)
 
         if body.get("gst_details"):
             gd = body["gst_details"]
@@ -881,12 +966,18 @@ def payment_callback(request):
             event.payment.last_updated   = datetime.utcnow()
             event.payment.payment_status = "paid_fully" if new_paid >= total else "advance"
             event.save()
+            try:
+                from apps.common.invoice_utils import generate_and_deliver_invoice
+                generate_and_deliver_invoice(event)
+            except Exception:
+                pass
 
         return api_response(True, "Payment status updated", {
             "state":          result.get("state"),
             "event_id":       str(event.id),
             "payment_status": event.payment.payment_status,
             "paid_amount":    event.payment.paid_amount,
+            "invoice_url":    event.payment.invoice_url if event.payment else "",
         })
     except Exception as e:
         return api_response(False, str(e), status=500)
@@ -912,7 +1003,6 @@ def payment_webhook(request):
         merchant_order_id = result.get("merchant_order_id")
         event = Event.objects(payment__phonepay_order_id=merchant_order_id).first()
         if not event:
-            # Acknowledge anyway — PhonePe expects 200 or it retries
             return api_response(True, "Acknowledged")
 
         if result.get("state") == "COMPLETED":
@@ -924,6 +1014,11 @@ def payment_webhook(request):
             event.payment.last_updated            = datetime.utcnow()
             event.payment.payment_status          = "paid_fully" if new_paid >= total else "advance"
             event.save()
+            try:
+                from apps.common.invoice_utils import generate_and_deliver_invoice
+                generate_and_deliver_invoice(event)
+            except Exception:
+                pass
 
         return api_response(True, "Webhook processed")
     except Exception as e:
@@ -1003,6 +1098,37 @@ def client_my_events(request):
                 "total": total, "page": page,
                 "page_size": page_size, "total_pages": -(-total // page_size),
             }
+        })
+    except Exception as e:
+        return api_response(False, str(e), status=500)
+
+
+# ─────────────────────────────────────────────────────────────
+#  Invoice
+# ─────────────────────────────────────────────────────────────
+
+@csrf_exempt
+@require_auth
+def get_invoice(request, event_id):
+    """
+    GET /api/events/<event_id>/invoice/
+    Returns the S3 URL of the invoice PDF.
+    If not yet generated (e.g. cash payment), generates it on demand.
+    """
+    if request.method != "GET":
+        return api_response(False, "Method not allowed", status=405)
+    try:
+        event = Event.objects.get(id=event_id)
+    except DoesNotExist:
+        return api_response(False, "Event not found", status=404)
+    try:
+        invoice_url = event.payment.invoice_url if event.payment else ""
+        if not invoice_url:
+            from apps.common.invoice_utils import generate_and_deliver_invoice
+            invoice_url = generate_and_deliver_invoice(event)
+        return api_response(True, "Invoice fetched", {
+            "invoice_url":    invoice_url,
+            "invoice_number": event.payment.invoice_number if event.payment else "",
         })
     except Exception as e:
         return api_response(False, str(e), status=500)

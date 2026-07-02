@@ -52,11 +52,6 @@ class GSTDetails(EmbeddedDocument):
 # ─────────────────────────────────────────────────────────────
 
 class PaymentInfo(EmbeddedDocument):
-    """
-    1-to-1 with Event so embedded keeps queries simple.
-    PhonePe transaction IDs are stored here once the gateway
-    utility is wired up.
-    """
     # Amounts
     total_amount    = FloatField(default=0)
     gst_amount      = FloatField(default=0)
@@ -68,6 +63,18 @@ class PaymentInfo(EmbeddedDocument):
         choices=["unpaid", "advance", "paid_fully", "refund_pending"],
         default="unpaid"
     )
+
+    # Payment method and advance type
+    payment_method  = StringField(choices=["CASH", "ONLINE"], default="ONLINE")
+    advance_type    = StringField(choices=["FULL", "HALF"], default="FULL")
+
+    # Balance due tracking (populated when advance_type=HALF)
+    balance_due_date        = DateTimeField(default=None)
+    balance_reminder_sent   = BooleanField(default=False)
+
+    # Invoice — populated after successful payment
+    invoice_url     = StringField(default="")
+    invoice_number  = StringField(default="")
 
     # PhonePe — populated after gateway callback
     phonepay_transaction_id = StringField(default="")
@@ -114,13 +121,20 @@ class Event(Document):
     working_hours        = FloatField()                   # e.g. 8.5
 
     # ── Crew ─────────────────────────────────────────────────
+    crew_members        = ListField(ReferenceField(StaffProfile))
+
+    # Package (Luxury / Premium / Both)
+    package_type        = StringField(choices=["LUXURY", "PREMIUM", "BOTH"], default=None)
+    luxury_crew_count   = IntField(default=0)
+    premium_crew_count  = IntField(default=0)
+
+    # Legacy fields kept so existing DB events still deserialise
     crew_count    = IntField(default=0)
-    crew_members  = ListField(ReferenceField(StaffProfile))  # Selected staff/models
 
     # ── Master Data References ────────────────────────────────
-    theme   = ReferenceField(EventTheme)               # Selected from master data
-    uniform = ReferenceField(UniformCategory)          # Selected from master data
-    package = ReferenceField(SubscriptionPlanSettings) # Diamond / Platinum / Gold …
+    theme   = ReferenceField(EventTheme)
+    uniform = ReferenceField(UniformCategory)
+    package = ReferenceField(SubscriptionPlanSettings)  # legacy — kept for old events
 
     # ── Client ───────────────────────────────────────────────
     client = ReferenceField(ClientProfile, required=True)

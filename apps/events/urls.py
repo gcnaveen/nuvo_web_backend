@@ -29,8 +29,9 @@ urlpatterns = [
     # ── Live Tracking ─────────────────────────────────────────────
     path("<str:event_id>/track/",             views.track_event,         name="track_event"),
 
-    # ── Payment ───────────────────────────────────────────────────
+    # ── Payment & Invoice ─────────────────────────────────────────
     path("<str:event_id>/payment/initiate/",  views.initiate_payment,    name="initiate_payment"),
+    path("<str:event_id>/invoice/",           views.get_invoice,         name="get_invoice"),
     path("payment/callback/",                 views.payment_callback,    name="payment_callback"),
     path("payment/webhook/",                  views.payment_webhook,     name="payment_webhook"),
 
