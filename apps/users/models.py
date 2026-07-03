@@ -148,7 +148,7 @@ class StaffProfile(Document):
     holiday_work        = BooleanField(default=False)
 
     # ── Professional (admin-managed) ───────────────────────────
-    package             = StringField(default="SILVER")
+    package             = StringField(default="LUXURY")
     price_of_staff      = FloatField(default=0)
     experience_in_years = IntField(default=0)
 

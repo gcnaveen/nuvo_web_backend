@@ -1055,7 +1055,7 @@ def admin_create_staff(request):
         city       = body.get("city", "").strip()
         state      = body.get("state", "").strip()
         country    = body.get("country", "India").strip()
-        package    = body.get("package", "SILVER").strip().upper()
+        package    = body.get("package", "LUXURY").strip().upper()
         experience = int(body.get("experience_in_years", 0) or 0)
         price      = float(body.get("price_of_staff", 0) or 0)
  
@@ -1434,7 +1434,7 @@ def admin_update_staff(request, staff_id):
         # ── Package ───────────────────────────────────────────────
         if "package" in body:
             pkg = body["package"].strip().upper()
-            valid = ["PLATINUM", "DIAMOND", "GOLD", "SILVER", "BRONZE"]
+            valid = ["LUXURY", "PREMIUM"]
             if pkg not in valid:
                 return api_response(False, f"Invalid package. Must be one of: {', '.join(valid)}", status=400)
             profile.package = pkg

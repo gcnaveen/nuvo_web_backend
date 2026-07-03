@@ -130,10 +130,10 @@ class PaymentTerms(Document):
 
     advancePercentage     = FloatField(required=True)
 
-    # Staff pricing per tier (per person per day, in INR)
-    # Keys: BRONZE | SILVER | GOLD | PLATINUM  (DIAMOND excluded — negotiated directly)
+    # Staff pricing per package type (per person per day, in INR)
+    # Keys: LUXURY | PREMIUM
     staff_pricing         = DictField(default=lambda: {
-        "BRONZE": 15000, "SILVER": 30000, "GOLD": 45000, "PLATINUM": 65000
+        "LUXURY": 20000, "PREMIUM": 10000
     })
 
     default_hours_per_day = FloatField(default=5.0)    # included hours in one day

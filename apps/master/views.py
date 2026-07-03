@@ -1041,18 +1041,17 @@ def upsert_crew_package(request, package_type):
 # 4. PAYMENT TERMS
 # ══════════════════════════════════════════════════════════════════════════════
 
-STAFF_TIERS = ["BRONZE", "SILVER", "GOLD", "PLATINUM"]
-
-DEFAULT_STAFF_PRICING = {"BRONZE": 15000, "SILVER": 30000, "GOLD": 45000, "PLATINUM": 65000}
+DEFAULT_STAFF_PRICING = {"LUXURY": 20000, "PREMIUM": 10000}
+STAFF_PACKAGE_TYPES = ["LUXURY", "PREMIUM"]
 
 
 def _ser_payment_terms(terms):
     return {
-        "advancePercentage":     terms.advancePercentage,
-        "staff_pricing":         terms.staff_pricing or DEFAULT_STAFF_PRICING,
-        "default_hours_per_day": terms.default_hours_per_day if terms.default_hours_per_day is not None else 5.0,
+        "advancePercentage":      terms.advancePercentage,
+        "staff_pricing":          terms.staff_pricing or DEFAULT_STAFF_PRICING,
+        "default_hours_per_day":  terms.default_hours_per_day if terms.default_hours_per_day is not None else 5.0,
         "overtime_rate_per_hour": terms.overtime_rate_per_hour if terms.overtime_rate_per_hour is not None else 3000.0,
-        "lastUpdatedAt":         str(terms.lastUpdatedAt),
+        "lastUpdatedAt":          str(terms.lastUpdatedAt),
     }
 
 
@@ -1083,7 +1082,7 @@ def update_payment_terms(request):
     """PUT /master/payment/update/
     Body: {
         "advancePercentage": 30,
-        "staff_pricing": {"BRONZE": 15000, "SILVER": 30000, "GOLD": 45000, "PLATINUM": 65000},
+        "staff_pricing": {"LUXURY": 20000, "PREMIUM": 10000},
         "default_hours_per_day": 5,
         "overtime_rate_per_hour": 3000
     }"""
@@ -1107,12 +1106,12 @@ def update_payment_terms(request):
             if not isinstance(pricing, dict):
                 return api_response(False, "staff_pricing must be an object", status=400)
             validated = {}
-            for tier in STAFF_TIERS:
-                if tier in pricing:
+            for pkg_type in STAFF_PACKAGE_TYPES:
+                if pkg_type in pricing:
                     try:
-                        validated[tier] = float(pricing[tier])
+                        validated[pkg_type] = float(pricing[pkg_type])
                     except (ValueError, TypeError):
-                        return api_response(False, f"staff_pricing.{tier} must be a number", status=400)
+                        return api_response(False, f"staff_pricing.{pkg_type} must be a number", status=400)
             terms.staff_pricing = {**(terms.staff_pricing or DEFAULT_STAFF_PRICING), **validated}
 
         if "default_hours_per_day" in body:
@@ -1282,7 +1281,7 @@ def get_payment_config_public(request):
     """GET /master/payment/config/ — NO auth, public endpoint for mobile app.
 
     Returns all pricing config the mobile app needs to calculate event costs:
-      - staff_pricing per tier
+      - packages: LUXURY and PREMIUM crew package pricing
       - default_hours_per_day
       - overtime_rate_per_hour
       - advancePercentage
@@ -1292,12 +1291,10 @@ def get_payment_config_public(request):
         "success": true,
         "data": {
             "advancePercentage": 30,
-            "staff_pricing": {
-                "BRONZE": 15000,
-                "SILVER": 30000,
-                "GOLD": 45000,
-                "PLATINUM": 65000
-            },
+            "packages": [
+                {"type": "LUXURY", "price_per_person": 20000, "standard_hours": 8, "extra_hour_rate": 2500},
+                {"type": "PREMIUM", "price_per_person": 10000, "standard_hours": 8, "extra_hour_rate": 1250}
+            ],
             "default_hours_per_day": 5.0,
             "overtime_rate_per_hour": 3000.0
         }
@@ -1307,16 +1304,27 @@ def get_payment_config_public(request):
         return api_response(False, "Invalid method", status=405)
     try:
         terms = PaymentTerms.objects().first()
+        packages = CrewPackage.objects().order_by("type")
+        packages_data = [
+            {
+                "type": p.type,
+                "price_per_person": p.price_per_person,
+                "standard_hours": p.standard_hours,
+                "extra_hour_rate": round(p.price_per_person / p.standard_hours, 2) if p.standard_hours else 0,
+            }
+            for p in packages
+        ]
         if not terms:
-            # Return defaults if admin hasn't saved yet
             return api_response(True, "Payment config fetched", {
                 "advancePercentage":      0,
+                "packages":               packages_data,
                 "staff_pricing":          DEFAULT_STAFF_PRICING,
                 "default_hours_per_day":  5.0,
                 "overtime_rate_per_hour": 3000.0,
             })
         return api_response(True, "Payment config fetched", {
             "advancePercentage":      terms.advancePercentage,
+            "packages":               packages_data,
             "staff_pricing":          terms.staff_pricing or DEFAULT_STAFF_PRICING,
             "default_hours_per_day":  terms.default_hours_per_day  if terms.default_hours_per_day  is not None else 5.0,
             "overtime_rate_per_hour": terms.overtime_rate_per_hour if terms.overtime_rate_per_hour is not None else 3000.0,
