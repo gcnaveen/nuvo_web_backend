@@ -219,11 +219,16 @@ def _calculate_event_total(
     working_hours: float,
 ) -> float:
     """
-    Compute the base event total from CrewPackage pricing.
-    Extra hours beyond standard_hours are billed at extra_hour_rate per person.
-    Returns 0.0 if no package_type or package not configured yet.
+    Compute the base event total from PaymentTerms.staff_pricing.
+    This keeps the backend calculation in sync with the mobile price preview,
+    both of which source prices from the Payment Terms admin screen.
     """
-    from apps.master.models import CrewPackage
+    from apps.master.models import PaymentTerms
+
+    terms         = PaymentTerms.objects.first()
+    staff_pricing = (terms.staff_pricing if terms else None) or {"LUXURY": 20000, "PREMIUM": 10000}
+    default_hours = float(getattr(terms, "default_hours_per_day", None) or 8)
+    overtime_rate = float(getattr(terms, "overtime_rate_per_hour", None) or 0)
 
     total = 0.0
     if not package_type:
@@ -232,13 +237,12 @@ def _calculate_event_total(
     def _pkg_cost(pkg_type: str, count: int) -> float:
         if count <= 0:
             return 0.0
-        pkg = CrewPackage.objects(type=pkg_type).first()
-        if not pkg or pkg.price_per_person <= 0:
+        price = float(staff_pricing.get(pkg_type, 0))
+        if price <= 0:
             return 0.0
-        base        = pkg.price_per_person * count
-        std_hours   = pkg.standard_hours or 8
-        extra_hours = max(0.0, working_hours - std_hours)
-        overtime    = extra_hours * pkg.extra_hour_rate * count
+        base        = price * count
+        extra_hours = max(0.0, working_hours - default_hours)
+        overtime    = extra_hours * overtime_rate * count
         return base + overtime
 
     if package_type in ("LUXURY", "BOTH"):

@@ -1046,9 +1046,11 @@ STAFF_PACKAGE_TYPES = ["LUXURY", "PREMIUM"]
 
 
 def _ser_payment_terms(terms):
+    raw_pricing = terms.staff_pricing or {}
+    clean_pricing = {k: raw_pricing[k] for k in STAFF_PACKAGE_TYPES if k in raw_pricing}
     return {
         "advancePercentage":      terms.advancePercentage,
-        "staff_pricing":          terms.staff_pricing or DEFAULT_STAFF_PRICING,
+        "staff_pricing":          clean_pricing or DEFAULT_STAFF_PRICING,
         "default_hours_per_day":  terms.default_hours_per_day if terms.default_hours_per_day is not None else 5.0,
         "overtime_rate_per_hour": terms.overtime_rate_per_hour if terms.overtime_rate_per_hour is not None else 3000.0,
         "lastUpdatedAt":          str(terms.lastUpdatedAt),
@@ -1105,14 +1107,17 @@ def update_payment_terms(request):
             pricing = body["staff_pricing"]
             if not isinstance(pricing, dict):
                 return api_response(False, "staff_pricing must be an object", status=400)
-            validated = {}
+            # Build clean dict from only LUXURY/PREMIUM, preserving existing values for any key not sent
+            current = terms.staff_pricing or {}
+            current_clean = {k: current[k] for k in STAFF_PACKAGE_TYPES if k in current}
+            validated = dict(current_clean)
             for pkg_type in STAFF_PACKAGE_TYPES:
                 if pkg_type in pricing:
                     try:
                         validated[pkg_type] = float(pricing[pkg_type])
                     except (ValueError, TypeError):
                         return api_response(False, f"staff_pricing.{pkg_type} must be a number", status=400)
-            terms.staff_pricing = {**(terms.staff_pricing or DEFAULT_STAFF_PRICING), **validated}
+            terms.staff_pricing = validated or DEFAULT_STAFF_PRICING
 
         if "default_hours_per_day" in body:
             h = float(body["default_hours_per_day"])
@@ -1304,28 +1309,36 @@ def get_payment_config_public(request):
         return api_response(False, "Invalid method", status=405)
     try:
         terms = PaymentTerms.objects().first()
-        packages = CrewPackage.objects().order_by("type")
-        packages_data = [
-            {
-                "type": p.type,
-                "price_per_person": p.price_per_person,
-                "standard_hours": p.standard_hours,
-                "extra_hour_rate": round(p.price_per_person / p.standard_hours, 2) if p.standard_hours else 0,
-            }
-            for p in packages
-        ]
+
+        def _build_packages(pricing_dict, std_hours):
+            data = []
+            for pkg_type in STAFF_PACKAGE_TYPES:
+                price = float(pricing_dict.get(pkg_type, DEFAULT_STAFF_PRICING.get(pkg_type, 0)))
+                data.append({
+                    "type":             pkg_type,
+                    "price_per_person": price,
+                    "standard_hours":   std_hours,
+                })
+            return data
+
         if not terms:
             return api_response(True, "Payment config fetched", {
                 "advancePercentage":      0,
-                "packages":               packages_data,
+                "packages":               _build_packages(DEFAULT_STAFF_PRICING, 8),
                 "staff_pricing":          DEFAULT_STAFF_PRICING,
                 "default_hours_per_day":  5.0,
                 "overtime_rate_per_hour": 3000.0,
             })
+
+        raw_pricing   = terms.staff_pricing or {}
+        clean_pricing = {k: raw_pricing[k] for k in STAFF_PACKAGE_TYPES if k in raw_pricing}
+        clean_pricing = clean_pricing or DEFAULT_STAFF_PRICING
+        std_hours     = int(terms.default_hours_per_day or 8)
+
         return api_response(True, "Payment config fetched", {
             "advancePercentage":      terms.advancePercentage,
-            "packages":               packages_data,
-            "staff_pricing":          terms.staff_pricing or DEFAULT_STAFF_PRICING,
+            "packages":               _build_packages(clean_pricing, std_hours),
+            "staff_pricing":          clean_pricing,
             "default_hours_per_day":  terms.default_hours_per_day  if terms.default_hours_per_day  is not None else 5.0,
             "overtime_rate_per_hour": terms.overtime_rate_per_hour if terms.overtime_rate_per_hour is not None else 3000.0,
         })
