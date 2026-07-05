@@ -133,8 +133,13 @@ class Event(Document):
 
     # ── Master Data References ────────────────────────────────
     theme   = ReferenceField(EventTheme)
-    uniform = ReferenceField(UniformCategory)
+    uniform = ReferenceField(UniformCategory)   # legacy — single-uniform events, kept for old data
     package = ReferenceField(SubscriptionPlanSettings)  # legacy — kept for old events
+
+    # Uniform selection (Luxury / Premium crew, chosen independently)
+    luxury_uniform_type = StringField(choices=["custom", "predefined"], default=None)
+    luxury_uniform      = ReferenceField(UniformCategory)  # None when luxury_uniform_type == "custom"
+    premium_uniform     = ReferenceField(UniformCategory)
 
     # ── Client ───────────────────────────────────────────────
     client = ReferenceField(ClientProfile, required=True)

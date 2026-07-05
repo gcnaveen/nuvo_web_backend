@@ -122,9 +122,12 @@ def serialize_event(event, full=False) -> dict:
 
     if not full:
         # Compact list view: just return the IDs, don't dereference
-        base["theme_id"]   = safe_id(event.theme)
-        base["uniform_id"] = safe_id(event.uniform)
-        base["package_id"] = safe_id(event.package)
+        base["theme_id"]           = safe_id(event.theme)
+        base["uniform_id"]         = safe_id(event.uniform)
+        base["package_id"]         = safe_id(event.package)
+        base["luxury_uniform_type"] = event.luxury_uniform_type
+        base["luxury_uniform_id"]  = safe_id(event.luxury_uniform)
+        base["premium_uniform_id"] = safe_id(event.premium_uniform)
         return base
 
     # ── Full detail: safely dereference theme, uniform, package ────────
@@ -152,6 +155,22 @@ def serialize_event(event, full=False) -> dict:
         }
     elif event.uniform:
         uniform_data = {"id": safe_id(event.uniform), "category_name": "[Deleted]"}
+
+    def _uniform_summary(ref):
+        doc = safe_ref(ref)
+        if doc:
+            return {
+                "id":            str(doc.id),
+                "category_name": doc.category_name,
+                "unique_key":    doc.unique_key,
+                "images":        list(doc.images or []),
+            }
+        if ref:
+            return {"id": safe_id(ref), "category_name": "[Deleted]"}
+        return None
+
+    luxury_uniform_data  = _uniform_summary(event.luxury_uniform)
+    premium_uniform_data = _uniform_summary(event.premium_uniform)
 
     package_doc = safe_ref(event.package)
     package_data = None
@@ -191,11 +210,14 @@ def serialize_event(event, full=False) -> dict:
         }
 
     base.update({
-        "theme":        theme_data,
-        "uniform":      uniform_data,
-        "package":      package_data,
-        "crew_members": crew,
-        "gst_details":  gst,
+        "theme":               theme_data,
+        "uniform":             uniform_data,
+        "package":             package_data,
+        "luxury_uniform_type": event.luxury_uniform_type,
+        "luxury_uniform":      luxury_uniform_data,
+        "premium_uniform":     premium_uniform_data,
+        "crew_members":        crew,
+        "gst_details":         gst,
     })
 
     return base
@@ -312,6 +334,32 @@ def create_event(request):
         if package_type and package_type not in ("LUXURY", "PREMIUM", "BOTH"):
             return api_response(False, "package_type must be LUXURY, PREMIUM, or BOTH", status=400)
 
+        # ── Uniform selection — Luxury (custom or predefined) + Premium ──
+        # Custom is only offered for Luxury crew; Premium is always predefined.
+        luxury_uniform_type = (body.get("luxury_uniform_type") or "").strip().lower() or None
+        luxury_uniform      = None
+        premium_uniform     = None
+
+        if package_type in ("LUXURY", "BOTH"):
+            if luxury_uniform_type and luxury_uniform_type not in ("custom", "predefined"):
+                return api_response(False, "luxury_uniform_type must be 'custom' or 'predefined'", status=400)
+
+            if luxury_uniform_type == "custom":
+                # No catalog uniform is picked — admin will contact the client to arrange it.
+                luxury_uniform = None
+            elif body.get("luxury_uniform_id"):
+                luxury_uniform = UniformCategory.objects(id=body["luxury_uniform_id"]).first()
+                if not luxury_uniform:
+                    return api_response(False, "luxury_uniform_id not found", status=404)
+                luxury_uniform_type = luxury_uniform_type or "predefined"
+        else:
+            luxury_uniform_type = None
+
+        if package_type in ("PREMIUM", "BOTH") and body.get("premium_uniform_id"):
+            premium_uniform = UniformCategory.objects(id=body["premium_uniform_id"]).first()
+            if not premium_uniform:
+                return api_response(False, "premium_uniform_id not found", status=404)
+
         # ── Payment total auto-calculation from package pricing ──
         working_hours = float(body["working_hours"]) if body.get("working_hours") else 8.0
         total_amount  = _calculate_event_total(
@@ -374,6 +422,9 @@ def create_event(request):
             premium_crew_count   = premium_crew_count,
             theme                = theme,
             uniform              = uniform,
+            luxury_uniform_type  = luxury_uniform_type,
+            luxury_uniform       = luxury_uniform,
+            premium_uniform      = premium_uniform,
             client               = client,
             gst_details          = gst,
             payment              = payment,
@@ -527,6 +578,28 @@ def update_event(request, event_id):
             if pt not in ("LUXURY", "PREMIUM", "BOTH"):
                 return api_response(False, "package_type must be LUXURY, PREMIUM, or BOTH", status=400)
             event.package_type = pt
+
+        # ── Uniform selection update — Luxury (custom/predefined) + Premium ──
+        if body.get("luxury_uniform_type"):
+            lut = body["luxury_uniform_type"].strip().lower()
+            if lut not in ("custom", "predefined"):
+                return api_response(False, "luxury_uniform_type must be 'custom' or 'predefined'", status=400)
+            event.luxury_uniform_type = lut
+            if lut == "custom":
+                event.luxury_uniform = None  # admin will contact the client directly
+
+        if body.get("luxury_uniform_id"):
+            luxury_uniform = UniformCategory.objects(id=body["luxury_uniform_id"]).first()
+            if not luxury_uniform:
+                return api_response(False, "luxury_uniform_id not found", status=404)
+            event.luxury_uniform = luxury_uniform
+            event.luxury_uniform_type = "predefined"
+
+        if body.get("premium_uniform_id"):
+            premium_uniform = UniformCategory.objects(id=body["premium_uniform_id"]).first()
+            if not premium_uniform:
+                return api_response(False, "premium_uniform_id not found", status=404)
+            event.premium_uniform = premium_uniform
         if body.get("luxury_crew_count")  is not None:
             event.luxury_crew_count  = int(body["luxury_crew_count"])
         if body.get("premium_crew_count") is not None:
