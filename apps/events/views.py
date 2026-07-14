@@ -1142,7 +1142,12 @@ def client_my_events(request):
             page_size = min(100, max(1, int(request.GET.get("page_size", 15))))
         except ValueError:
             return api_response(False, "page and page_size must be integers", status=400)
-        qs = Event.objects(client=client_profile)
+        # Exclude ONLINE events that are still unpaid (payment initiated but not confirmed).
+        # Cash events with unpaid status are shown because cash is collected by admin offline.
+        qs = Event.objects(
+            Q(client=client_profile) &
+            ~Q(payment__payment_method="ONLINE", payment__payment_status="unpaid")
+        )
         total  = qs.count()
         offset = (page - 1) * page_size
         events = qs.order_by("-created_at").skip(offset).limit(page_size)
