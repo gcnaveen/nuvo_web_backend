@@ -4,12 +4,6 @@ from django.urls import path
 from .views import *
 
 urlpatterns = [
-    # ── Event Themes ──────────────────────────────────────────────
-    path("themes/create/",                   create_event_theme),
-    path("themes/",                          list_event_themes),
-    path("themes/<str:theme_id>/update/",    update_event_theme),
-    path("themes/<str:theme_id>/delete/",    delete_event_theme),
-
     # ── Uniform Categories (Master Data) ──────────────────────────
     # NOTE: static paths must come before parameterised ones
     path("uniform/create/",                         create_uniform_category),

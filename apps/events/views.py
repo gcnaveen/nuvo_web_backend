@@ -122,27 +122,14 @@ def serialize_event(event, full=False) -> dict:
 
     if not full:
         # Compact list view: just return the IDs, don't dereference
-        base["theme_id"]           = safe_id(event.theme)
-        base["uniform_id"]         = safe_id(event.uniform)
-        base["package_id"]         = safe_id(event.package)
+        base["uniform_id"]          = safe_id(event.uniform)
+        base["package_id"]          = safe_id(event.package)
         base["luxury_uniform_type"] = event.luxury_uniform_type
-        base["luxury_uniform_id"]  = safe_id(event.luxury_uniform)
-        base["premium_uniform_id"] = safe_id(event.premium_uniform)
+        base["luxury_uniform_id"]   = safe_id(event.luxury_uniform)
+        base["premium_uniform_id"]  = safe_id(event.premium_uniform)
         return base
 
-    # ── Full detail: safely dereference theme, uniform, package ────────
-
-    theme_doc = safe_ref(event.theme)
-    theme_data = None
-    if theme_doc:
-        theme_data = {
-            "id":          str(theme_doc.id),
-            "theme_name":  theme_doc.theme_name,
-            "cover_image": theme_doc.cover_image,
-            "status":      theme_doc.status,
-        }
-    elif event.theme:
-        theme_data = {"id": safe_id(event.theme), "theme_name": "[Deleted]"}
+    # ── Full detail: safely dereference uniform, package ────────────────
 
     uniform_doc = safe_ref(event.uniform)
     uniform_data = None
@@ -210,7 +197,6 @@ def serialize_event(event, full=False) -> dict:
         }
 
     base.update({
-        "theme":               theme_data,
         "uniform":             uniform_data,
         "package":             package_data,
         "luxury_uniform_type": event.luxury_uniform_type,
@@ -287,7 +273,7 @@ def create_event(request):
     try:
         body = json.loads(request.body)
         from apps.users.models import StaffProfile, ClientProfile
-        from apps.master.models import EventTheme, UniformCategory, CrewPackage
+        from apps.master.models import UniformCategory, CrewPackage
 
         event_name = body.get("event_name", "").strip()
         city       = body.get("city", "").strip()
@@ -323,7 +309,6 @@ def create_event(request):
         if not client:
             return api_response(False, "Client profile not found", status=404)
 
-        theme   = EventTheme.objects(id=body["theme_id"]).first()      if body.get("theme_id")   else None
         uniform = UniformCategory.objects(id=body["uniform_id"]).first() if body.get("uniform_id") else None
 
         # ── Package selection (Luxury / Premium / Both) ──────────
@@ -420,7 +405,6 @@ def create_event(request):
             package_type         = package_type,
             luxury_crew_count    = luxury_crew_count,
             premium_crew_count   = premium_crew_count,
-            theme                = theme,
             uniform              = uniform,
             luxury_uniform_type  = luxury_uniform_type,
             luxury_uniform       = luxury_uniform,
@@ -540,7 +524,7 @@ def update_event(request, event_id):
     try:
         body = json.loads(request.body)
         from apps.users.models import StaffProfile, ClientProfile
-        from apps.master.models import EventTheme, UniformCategory
+        from apps.master.models import UniformCategory
 
         if body.get("event_name"):    event.event_name  = body["event_name"].strip()
         if body.get("event_type"):    event.event_type  = body["event_type"]
@@ -569,7 +553,6 @@ def update_event(request, event_id):
             if vd.get("place_id"):            event.venue.place_id          = vd["place_id"]
             if vd.get("google_maps_url"):     event.venue.google_maps_url   = vd["google_maps_url"]
 
-        if body.get("theme_id"):   event.theme   = EventTheme.objects(id=body["theme_id"]).first()
         if body.get("uniform_id"): event.uniform = UniformCategory.objects(id=body["uniform_id"]).first()
 
         # ── Package update ─────────────────────────────────────
@@ -1153,7 +1136,6 @@ def client_my_events(request):
         events = qs.order_by("-created_at").skip(offset).limit(page_size)
         results = []
         for event in events:
-            theme_name = safe_attr(event.theme, "theme_name") or safe_attr(event.theme, "name") or ""
             payment_data = {}
             order_id = ""
             if event.payment:
@@ -1167,11 +1149,10 @@ def client_my_events(request):
                     "phonepay_transaction_id": event.payment.phonepay_transaction_id,
                 }
             results.append({
-                "event_id":         str(event.id),
-                "event_name":       event.event_name,
-                "event_theme_name": theme_name,
-                "order_id":         order_id,
-                "payment_details":  payment_data,
+                "event_id":        str(event.id),
+                "event_name":      event.event_name,
+                "order_id":        order_id,
+                "payment_details": payment_data,
                 "status":           event.status,
             })
         return api_response(True, "My events fetched successfully", {

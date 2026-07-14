@@ -4,7 +4,6 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from apps.accounts.decorators import require_auth, require_role
 from .models import (
-    EventTheme,
     UniformCategory,
     SubscriptionPlanSettings,
     PaymentTerms
@@ -18,7 +17,7 @@ import boto3
 
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
-from .models import EventTheme, UniformCategory, SubscriptionPlanSettings, PaymentTerms, CrewMember, Coupon
+from .models import UniformCategory, SubscriptionPlanSettings, PaymentTerms, CrewMember, Coupon
 from apps.events.models import Event
 
 
@@ -83,128 +82,6 @@ def api_response(success, message, data=None, status=200):
         "data": data if data is not None else {}
     }, status=status)
 
-# 1. EVENT THEMES
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _ser_theme(t):
-    return {
-        "id": str(t.id), "theme_name": t.theme_name,
-        "status": t.status or "ACTIVE", "description": t.description or "",
-        "cover_image": t.cover_image or "", "gallery_images": t.gallery_images or [],
-        "created_at": str(t.created_at) if t.created_at else None,
-        "updated_at": str(t.updated_at) if t.updated_at else None,
-    }
-
-@csrf_exempt
-@require_auth
-@require_role(["ADMIN"])
-def create_event_theme(request):
-    """POST /master/themes/create/ — multipart/form-data
-    Fields: theme_name*(req), description, status, cover_image(file), gallery_images(files)"""
-    if request.method != "POST":
-        return api_response(False, "Invalid method", status=405)
-    try:
-        name = request.POST.get("theme_name", "").strip()
-        if not name:
-            return api_response(False, "theme_name is required", status=400)
-        theme = EventTheme(
-            theme_name  = name,
-            description = request.POST.get("description", "").strip(),
-            status      = request.POST.get("status", "ACTIVE").strip().upper(),
-        )
-        if cf := request.FILES.get("cover_image"):
-            theme.cover_image = _s3_upload(cf, "themes/covers", str(theme.id or uuid.uuid4()))
-        if gf := request.FILES.getlist("gallery_images"):
-            theme.gallery_images = [_s3_upload(f, "themes/gallery") for f in gf]
-        theme.save()
-        return api_response(True, "Event theme created", _ser_theme(theme), status=201)
-    except Exception as e:
-        return api_response(False, str(e), status=500)
-
-@csrf_exempt
-@require_auth
-@require_role(["ADMIN", "CLIENT"])
-def list_event_themes(request):
-    """GET /master/themes/"""
-    if request.method != "GET":
-        return api_response(False, "Invalid method", status=405)
-    try:
-        return api_response(True, "Themes fetched",
-            [_ser_theme(t) for t in EventTheme.objects().order_by("-created_at")])
-    except Exception as e:
-        return api_response(False, str(e), status=500)
-    
-
-@csrf_exempt
-@require_auth
-@require_role(["ADMIN"])
-def update_event_theme(request, theme_id):
-    """PUT /master/themes/<theme_id>/update/ — multipart/form-data
-    Fields (all opt): theme_name, description, status,
-                      cover_image(file), gallery_images(files),
-                      delete_gallery_urls (JSON array string)"""
-    if request.method != "PUT":
-        return api_response(False, "Invalid method", status=405)
-    try:
-        theme = EventTheme.objects(id=theme_id).first()
-        if not theme:
-            return api_response(False, "Theme not found", status=404)
-        if v := request.POST.get("theme_name", "").strip(): theme.theme_name = v
-        if "description" in request.POST: theme.description = request.POST["description"].strip()
-        if "status" in request.POST: theme.status = request.POST["status"].strip().upper()
-        if cf := request.FILES.get("cover_image"):
-            _s3_delete(theme.cover_image or "")
-            theme.cover_image = _s3_upload(cf, "themes/covers", str(theme.id))
-        if raw := request.POST.get("delete_gallery_urls", ""):
-            try:
-                gallery = list(theme.gallery_images or [])
-                for url in json.loads(raw):
-                    if url in gallery:
-                        gallery.remove(url); _s3_delete(url)
-                theme.gallery_images = gallery
-            except Exception: pass
-        if gf := request.FILES.getlist("gallery_images"):
-            theme.gallery_images = (theme.gallery_images or []) + [_s3_upload(f, "themes/gallery") for f in gf]
-        theme.save()
-        return api_response(True, "Theme updated", _ser_theme(theme))
-    except Exception as e:
-        return api_response(False, str(e), status=500)
-
-
-@csrf_exempt
-@require_auth
-@require_role(["ADMIN"])
-def delete_event_theme(request, theme_id):
-    """DELETE /master/themes/<theme_id>/delete/"""
-    if request.method != "DELETE":
-        return api_response(False, "Invalid method", status=405)
-    try:
-        theme = EventTheme.objects(id=theme_id).first()
-        if not theme:
-            return api_response(False, "Theme not found", status=404)
-
-        # -- Reference check --
-        from apps.events.models import Event
-        in_use = _events_using({"theme": theme})
-        if in_use:
-            return api_response(
-                False,
-                f"Cannot delete '{theme.theme_name}' — it is used by "
-                f"{len(in_use)} active event(s). Remove the theme from those "
-                f"events first, or wait until they are cancelled/completed.",
-                data={"events_using_this": in_use},
-                status=409,
-            )
-
-        # Safe to delete — clean up S3 assets too
-        _s3_delete(theme.cover_image or "")
-        for url in (theme.gallery_images or []):
-            _s3_delete(url)
-        theme.delete()
-        return api_response(True, "Theme deleted successfully")
-
-    except Exception as e:
-        return api_response(False, str(e), status=500)
 
 
 

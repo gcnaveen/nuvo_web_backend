@@ -15,7 +15,7 @@ from mongoengine import (
     EmbeddedDocumentField,
 )
 
-from apps.master.models import EventTheme, UniformCategory, SubscriptionPlanSettings
+from apps.master.models import UniformCategory, SubscriptionPlanSettings
 from apps.users.models import User, StaffProfile, ClientProfile
 
 
@@ -101,7 +101,7 @@ EVENT_STATUS_CHOICES = [
 # ─────────────────────────────────────────────────────────────
 
 class Event(Document):
-    meta = {"collection": "events"}
+    meta = {"collection": "events", "strict": False}
 
     id = StringField(primary_key=True, default=lambda: str(uuid.uuid4()))
 
@@ -132,7 +132,6 @@ class Event(Document):
     crew_count    = IntField(default=0)
 
     # ── Master Data References ────────────────────────────────
-    theme   = ReferenceField(EventTheme)
     uniform = ReferenceField(UniformCategory)   # legacy — single-uniform events, kept for old data
     package = ReferenceField(SubscriptionPlanSettings)  # legacy — kept for old events
 
