@@ -250,7 +250,7 @@ def staff_self_register(request):
             image_files = image_files[:4]
             gallery_urls = []
             for f in image_files:
-                url = _s3_upload(f, folder="staff/registration_gallery")
+                url = _s3_upload(f, folder="staff/gallery")
                 gallery_urls.append(url)
             profile.gallery_images = gallery_urls
             profile.save()
